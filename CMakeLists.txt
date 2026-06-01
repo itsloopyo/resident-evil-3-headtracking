@@ -1,0 +1,41 @@
+cmake_minimum_required(VERSION 3.20)
+project(RE3HeadTracking VERSION 0.0.0 LANGUAGES CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+if(WIN32)
+    add_definitions(-DWIN32_LEAN_AND_MEAN -DNOMINMAX -D_CRT_SECURE_NO_WARNINGS)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
+# cameraunlock-core shared library (static)
+set(CAMERAUNLOCK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(cameraunlock-core/cpp ${CMAKE_BINARY_DIR}/cameraunlock-core)
+
+# Plugin sources
+add_library(RE3HeadTracking SHARED
+    src/pch.cpp
+    src/plugin_main.cpp
+    src/core/mod.cpp
+    src/core/config.cpp
+    src/core/logger.cpp
+    src/camera/camera_hook.cpp
+    src/camera/game_state_detector.cpp
+)
+
+target_precompile_headers(RE3HeadTracking PRIVATE src/pch.h)
+
+set_target_properties(RE3HeadTracking PROPERTIES
+    OUTPUT_NAME "RE3HeadTracking"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
+)
+
+target_link_libraries(RE3HeadTracking PRIVATE cameraunlock ws2_32)
+
+target_include_directories(RE3HeadTracking PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/extern
+)

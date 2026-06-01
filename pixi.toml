@@ -1,0 +1,58 @@
+[workspace]
+name = "re3-head-tracking"
+version = "0.0.0"
+description = "Head tracking mod for Resident Evil 3 Remake via REFramework"
+license = "MIT"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[tasks]
+# Update the cameraunlock-core submodule to its remote tip.
+sync = { cmd = "git submodule update --init --remote cameraunlock-core" }
+
+# Generate the CMake build tree (x64 Visual Studio 2022).
+setup = { cmd = """
+    powershell -Command "if (-not (Test-Path 'build')) { cmake -B build -G 'Visual Studio 17 2022' -A x64 } else { Write-Host 'Build directory exists, skipping setup' -ForegroundColor Yellow }"
+""" }
+
+# Bump vendored mod-loader copies under vendor/ to latest upstream within
+# their pinned version range. Manual; commit the result. CI does not run this,
+# and build/package/release must not depend on it (deterministic offline builds).
+update-deps = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/update-deps.ps1" }
+
+# Build debug configuration.
+build-debug = { cmd = "cmake --build build --config Debug", depends-on = ["setup"] }
+
+# Build release configuration. The shippable binary task.
+build = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
+
+# Deploy debug build to a detected local game install.
+deploy = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Debug", depends-on = ["build-debug"] }
+
+# Build release and deploy to a detected local game install.
+install = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/deploy.ps1 Release", depends-on = ["build"] }
+
+# Run the mod's user-facing uninstaller (release ZIP entry point) against
+# the detected install. cmd /c: pixi runs through bash which mangles %% in
+# .cmd for-loops.
+uninstall = { cmd = "cmd /c scripts\\uninstall.cmd" }
+uninstall-all = { cmd = "cmd /c scripts\\uninstall.cmd /force" }
+
+# Produce both -installer.zip and -nexus.zip in release/.
+package = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1", depends-on = ["build"] }
+
+# Clean build artifacts.
+clean = { cmd = """
+    powershell -Command "if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force }; if (Test-Path 'bin') { Remove-Item 'bin' -Recurse -Force }; Write-Host 'Build artifacts cleaned' -ForegroundColor Green"
+""" }
+
+# Clean everything including release output.
+clean-all = { cmd = """
+    powershell -Command "if (Test-Path 'build') { Remove-Item 'build' -Recurse -Force }; if (Test-Path 'bin') { Remove-Item 'bin' -Recurse -Force }; if (Test-Path 'release') { Remove-Item 'release' -Recurse -Force }; Write-Host 'All build artifacts cleaned' -ForegroundColor Green"
+""" }
+
+# Automated release workflow (version bump + tag + push).
+release = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1" }
+
+[dependencies]
+# No pixi dependencies; uses system CMake and Visual Studio 2022.

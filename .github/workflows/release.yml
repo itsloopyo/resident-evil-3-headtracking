@@ -1,0 +1,98 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build, package and publish release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v3
+
+      - name: Extract version from tag
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -notmatch '^v(\d+\.\d+\.\d+)$') {
+            Write-Host "::error::Tag '$tag' is not a valid vX.Y.Z release tag"
+            exit 1
+          }
+          $version = $Matches[1]
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Release version: $version" -ForegroundColor Green
+
+      - name: Validate version matches manifest.json
+        shell: pwsh
+        run: |
+          $manifest = Get-Content manifest.json -Raw | ConvertFrom-Json
+          if ($manifest.version -ne $env:VERSION) {
+            Write-Host "::error::manifest.json version '$($manifest.version)' does not match tag version '$($env:VERSION)'"
+            exit 1
+          }
+          Write-Host "manifest.json version matches tag: $($env:VERSION)" -ForegroundColor Green
+
+      - name: Configure CMake
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Package release
+        shell: pwsh
+        run: |
+          Write-Host "Packaging release ZIPs..." -ForegroundColor Cyan
+          powershell -ExecutionPolicy Bypass -File scripts/package-release.ps1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Packaging failed"
+            exit 1
+          }
+          Write-Host "Package created" -ForegroundColor Green
+
+      - name: Generate release notes
+        shell: pwsh
+        run: |
+          powershell -ExecutionPolicy Bypass -File cameraunlock-core/scripts/generate-release-notes.ps1 `
+            -Version $env:VERSION `
+            -ProjectName "RE3 Head Tracking" `
+            -ArtifactPaths @("src/", "cameraunlock-core/", "scripts/install.cmd", "scripts/uninstall.cmd")
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Release notes generation failed"
+            exit 1
+          }
+
+      - name: Find release ZIPs
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release -Filter '*-installer.zip' | Select-Object -First 1
+          $nexus     = Get-ChildItem -Path release -Filter '*-nexus.zip'     | Select-Object -First 1
+          if (-not $installer) { Write-Host "::error::Installer ZIP not found in release/"; exit 1 }
+          if (-not $nexus)     { Write-Host "::error::Nexus ZIP not found in release/";     exit 1 }
+          "INSTALLER_ZIP=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "NEXUS_ZIP=$($nexus.FullName)"         | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          Write-Host "Installer: $($installer.Name)" -ForegroundColor Green
+          Write-Host "Nexus:     $($nexus.Name)" -ForegroundColor Green
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            --title "RE3 Head Tracking $env:GITHUB_REF_NAME" `
+            --notes-file release-notes.txt `
+            "$env:INSTALLER_ZIP" `
+            "$env:NEXUS_ZIP"

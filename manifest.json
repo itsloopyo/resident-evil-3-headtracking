@@ -1,0 +1,9 @@
+{
+    "name": "RE3HeadTracking",
+    "author": "Loop",
+    "version": "0.0.0",
+    "description": "Head tracking for Resident Evil 3 Remake via OpenTrack",
+    "game": "Resident Evil 3 Remake",
+    "license": "MIT",
+    "repository": "https://github.com/itsloopyo/resident-evil-3-headtracking"
+}
