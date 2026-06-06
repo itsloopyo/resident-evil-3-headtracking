@@ -1,11 +1,13 @@
 #include "pch.h"
 #include "game_state_detector.h"
-#include "ref_utils.h"
 #include "core/logger.h"
 
 #include <reframework/API.hpp>
+#include <cameraunlock/reframework/managed_utils.h>
 
 namespace RE3HT {
+
+namespace ref = cameraunlock::reframework;
 
 // RE3 (offline.*) game-state signals, confirmed at runtime:
 //   PlayerManager.get_CurrentPlayer()             null => menu / loading
@@ -100,17 +102,17 @@ void RefreshGameState() {
                 auto pmgr = api->get_managed_singleton(kPlayerManager);
                 if (!pmgr) { suppressReason = "no PlayerManager"; __leave; }
 
-                auto player = InvokePtr(g_state.getCurrentPlayer, pmgr);
+                auto player = ref::CallMethod(g_state.getCurrentPlayer, pmgr);
                 if (!player) { suppressReason = "no player (menu/loading)"; __leave; }
 
-                auto condition = InvokePtrArg(g_state.getComponent, player, g_state.survivorConditionType);
-                if (condition && InvokeBool(g_state.getIsEvent, condition)) {
+                auto condition = ref::CallMethodArg(g_state.getComponent, player, g_state.survivorConditionType);
+                if (condition && ref::CallMethodBool(g_state.getIsEvent, condition)) {
                     suppressReason = "cutscene";
                     __leave;
                 }
 
                 auto gui = api->get_managed_singleton(kGuiMaster);
-                if (gui && InvokeBool(g_state.getIsOpenPause, gui)) {
+                if (gui && ref::CallMethodBool(g_state.getIsOpenPause, gui)) {
                     suppressReason = "paused";
                     __leave;
                 }

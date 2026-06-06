@@ -1,21 +1,12 @@
 #pragma once
 
-#include "constants.h"
 #include "config.h"
+#include <atomic>
+#include <cameraunlock/input/deferred_actions.h>
 #include <cameraunlock/protocol/udp_receiver.h>
-#include <cameraunlock/processing/tracking_processor.h>
-#include <cameraunlock/processing/pose_interpolator.h>
-#include <cameraunlock/processing/position_processor.h>
-#include <cameraunlock/processing/position_interpolator.h>
+#include <cameraunlock/tracking/head_tracking_session.h>
 
 namespace RE3HT {
-
-// Page Up / Ctrl+Shift+G cycles through these in order, wrapping back to Normal.
-enum class TrackingMode {
-    Normal,        // rotation + position
-    RotationOnly,  // position disabled
-    PositionOnly   // rotation disabled
-};
 
 class Mod {
 public:
@@ -33,18 +24,29 @@ public:
     void ToggleReticle();
     void ToggleYawMode();
 
+    // Hotkey callbacks fire on the HotkeyPoller's background thread, but
+    // Recenter and CycleTrackingMode mutate the session's non-atomic
+    // processor/interpolator smoothing state owned by the render thread. The
+    // hotkey thread only requests the action; ProcessDeferredActions() runs it
+    // on the render thread at the start of each frame.
+    void RequestRecenter() { m_recenterRequested.Request(); }
+    void RequestCycleTrackingMode() { m_cycleModeRequested.Request(); }
+    void ProcessDeferredActions();
+
     Config& GetConfig() { return m_config; }
     const Config& GetConfig() const { return m_config; }
+
+    // Advance interpolation + smoothing pipelines once per render frame.
+    // Every in-frame consumer (camera matrix, crosshair projection, GUI
+    // compensation) then reads identical cached values.
+    void TickFrame();
 
     bool GetProcessedRotation(float& yaw, float& pitch, float& roll);
     bool GetPositionOffset(float& x, float& y, float& z);
 
     float GetLastDeltaTime() const { return m_lastDeltaTime; }
 
-    bool IsReticleEnabled() const { return m_reticleEnabled; }
-    bool IsPositionEnabled() const { return m_trackingMode != TrackingMode::RotationOnly; }
-    bool IsRotationEnabled() const { return m_trackingMode != TrackingMode::PositionOnly; }
-    bool IsWorldSpaceYaw() const { return m_worldSpaceYaw; }
+    bool IsWorldSpaceYaw() const { return m_worldSpaceYaw.load(std::memory_order_relaxed); }
 
     Mod(const Mod&) = delete;
     Mod& operator=(const Mod&) = delete;
@@ -60,30 +62,17 @@ private:
 
     Config m_config;
     cameraunlock::UdpReceiver m_udpReceiver;
-    cameraunlock::PoseInterpolator m_poseInterpolator;
-    cameraunlock::TrackingProcessor m_processor;
-    int64_t m_lastReceiveTimestamp = 0;
+    cameraunlock::HeadTrackingSession<cameraunlock::UdpReceiver> m_session{m_udpReceiver};
 
-    cameraunlock::PositionProcessor m_positionProcessor;
-    cameraunlock::PositionInterpolator m_positionInterpolator;
-    TrackingMode m_trackingMode = TrackingMode::Normal;
-    bool m_reticleEnabled = true;
-    bool m_worldSpaceYaw = true;
+    // Read on the render thread, toggled on the hotkey thread.
+    std::atomic<bool> m_reticleEnabled{true};
+    std::atomic<bool> m_worldSpaceYaw{false};
 
-    uint64_t m_lastProcessTime = 0;
+    cameraunlock::input::DeferredAction m_recenterRequested;
+    cameraunlock::input::DeferredAction m_cycleModeRequested;
+
+    uint64_t m_lastFrameTickTime = 0;
     float m_lastDeltaTime = DELTA_TIME_DEFAULT;
-
-    float m_cachedYaw = 0.0f;
-    float m_cachedPitch = 0.0f;
-    float m_cachedRoll = 0.0f;
-    bool m_cachedValid = false;
-    bool m_hasCentered = false;
-    int m_stabilizationFrames = 0;
-
-    // Previous raw values for new-sample detection (data change, not just packet arrival)
-    float m_lastRawYaw = 0.0f;
-    float m_lastRawPitch = 0.0f;
-    float m_lastRawRoll = 0.0f;
 };
 
 } // namespace RE3HT

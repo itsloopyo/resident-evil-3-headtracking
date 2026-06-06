@@ -7,13 +7,13 @@
 #include "camera/camera_hook.h"
 
 #include <cameraunlock/input/hotkey_poller.h>
+#include <cameraunlock/input/chord_hotkeys.h>
+#include <cameraunlock/reframework/log_callback.h>
+
+using cameraunlock::input::NavGuarded;
+using cameraunlock::input::ChordGuarded;
 
 static cameraunlock::input::HotkeyPoller g_hotkeyPoller;
-
-static bool IsChordHeld() {
-    return ((GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0)
-        && ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
-}
 
 // --- REFramework application entry callbacks ---
 
@@ -53,6 +53,18 @@ bool reframework_plugin_initialize(const REFrameworkPluginInitializeParam* param
         param->functions->log_error
     );
 
+    // Bridge shared library logging to REFramework's log functions
+    cameraunlock::reframework::SetLogCallback([](cameraunlock::reframework::LogLevel level, const char* msg) {
+        switch (level) {
+            case cameraunlock::reframework::LogLevel::Warning:
+                RE3HT::Logger::Instance().Warning("%s", msg); break;
+            case cameraunlock::reframework::LogLevel::Error:
+                RE3HT::Logger::Instance().Error("%s", msg); break;
+            default:
+                RE3HT::Logger::Instance().Info("%s", msg); break;
+        }
+    });
+
     RE3HT::Logger::Instance().Info("RE3 Head Tracking v%s - Plugin loaded", RE3HT::RE3HT_VERSION);
 
     // Initialize mod (tracking pipeline, UDP receiver)
@@ -71,48 +83,20 @@ bool reframework_plugin_initialize(const REFrameworkPluginInitializeParam* param
 
     // Nav-cluster bindings. Suppressed when Ctrl+Shift is held so the chord
     // path (below) is the sole trigger for Ctrl+Shift+<nav> combos.
-    g_hotkeyPoller.SetToggleKey(config.toggleKey, []() {
-        if (IsChordHeld()) return;
-        RE3HT::Mod::Instance().Toggle();
-    });
-    g_hotkeyPoller.SetRecenterKey(config.recenterKey, []() {
-        if (IsChordHeld()) return;
-        RE3HT::Mod::Instance().Recenter();
-    });
-    g_hotkeyPoller.AddHotkey(config.positionToggleKey, []() {
-        if (IsChordHeld()) return;
-        RE3HT::Mod::Instance().CycleTrackingMode();
-    });
-    g_hotkeyPoller.AddHotkey(config.reticleToggleKey, []() {
-        if (IsChordHeld()) return;
-        RE3HT::Mod::Instance().ToggleReticle();
-    });
-    g_hotkeyPoller.AddHotkey(config.yawModeKey, []() {
-        if (IsChordHeld()) return;
-        RE3HT::Mod::Instance().ToggleYawMode();
-    });
+    // Recenter and mode-cycle mutate render-thread-owned session state, so the
+    // hotkey thread only requests them; the render frame runs them.
+    g_hotkeyPoller.SetToggleKey(config.toggleKey, NavGuarded([] { RE3HT::Mod::Instance().Toggle(); }));
+    g_hotkeyPoller.SetRecenterKey(config.recenterKey, NavGuarded([] { RE3HT::Mod::Instance().RequestRecenter(); }));
+    g_hotkeyPoller.AddHotkey(config.positionToggleKey, NavGuarded([] { RE3HT::Mod::Instance().RequestCycleTrackingMode(); }));
+    g_hotkeyPoller.AddHotkey(config.reticleToggleKey, NavGuarded([] { RE3HT::Mod::Instance().ToggleReticle(); }));
+    g_hotkeyPoller.AddHotkey(config.yawModeKey, NavGuarded([] { RE3HT::Mod::Instance().ToggleYawMode(); }));
 
     // Ctrl+Shift+<letter> chord bindings (CLAUDE.md T/Y/U/G/H/J cluster).
-    g_hotkeyPoller.AddHotkey('T', []() {
-        if (!IsChordHeld()) return;
-        RE3HT::Mod::Instance().Recenter();
-    });
-    g_hotkeyPoller.AddHotkey('Y', []() {
-        if (!IsChordHeld()) return;
-        RE3HT::Mod::Instance().Toggle();
-    });
-    g_hotkeyPoller.AddHotkey('G', []() {
-        if (!IsChordHeld()) return;
-        RE3HT::Mod::Instance().CycleTrackingMode();
-    });
-    g_hotkeyPoller.AddHotkey('H', []() {
-        if (!IsChordHeld()) return;
-        RE3HT::Mod::Instance().ToggleYawMode();
-    });
-    g_hotkeyPoller.AddHotkey('U', []() {
-        if (!IsChordHeld()) return;
-        RE3HT::Mod::Instance().ToggleReticle();
-    });
+    g_hotkeyPoller.AddHotkey('T', ChordGuarded([] { RE3HT::Mod::Instance().RequestRecenter(); }));
+    g_hotkeyPoller.AddHotkey('Y', ChordGuarded([] { RE3HT::Mod::Instance().Toggle(); }));
+    g_hotkeyPoller.AddHotkey('G', ChordGuarded([] { RE3HT::Mod::Instance().RequestCycleTrackingMode(); }));
+    g_hotkeyPoller.AddHotkey('H', ChordGuarded([] { RE3HT::Mod::Instance().ToggleYawMode(); }));
+    g_hotkeyPoller.AddHotkey('U', ChordGuarded([] { RE3HT::Mod::Instance().ToggleReticle(); }));
     g_hotkeyPoller.Start();
 
     RE3HT::Logger::Instance().Info("Plugin initialization complete");

@@ -1,19 +1,22 @@
 #include "pch.h"
 #include "camera_hook.h"
-#include "camera_math.h"
-#include "ref_utils.h"
+#include "math_types.h"
 #include "game_state_detector.h"
 #include "core/mod.h"
 #include "core/logger.h"
 
 #include <reframework/API.hpp>
 #include <cameraunlock/math/smoothing_utils.h>
+#include <cameraunlock/reframework/camera_chain.h>
+#include <cameraunlock/reframework/camera_controller_hook.h>
+#include <cameraunlock/reframework/managed_utils.h>
+#include <cameraunlock/rendering/gui_marker_compensation.h>
 #include <unordered_set>
 #include <string>
 
 namespace RE3HT {
 
-constexpr int TX_WORLDMATRIX_OFFSET = 0x80;
+namespace ref = cameraunlock::reframework;
 
 // Half the 1920x1080 reference canvas the GUI compensation projects against.
 // Focal lengths are expressed in pixels of that canvas.
@@ -26,7 +29,6 @@ struct CrosshairProjection {
     float tanRight = 0.0f;
     float tanUp = 0.0f;
     float fovDegrees = 75.0f;
-    float rollDegrees = 0.0f;
     bool valid = false;
 };
 
@@ -46,17 +48,24 @@ static struct {
 
 static bool g_trackingAppliedThisFrame = false;
 
-static struct {
-    reframework::API::Method* getMainView = nullptr;
-    reframework::API::Method* getPrimaryCamera = nullptr;
-    reframework::API::Method* getGameObject = nullptr;
-    reframework::API::Method* getTransform = nullptr;
-    reframework::API::Method* getCameraFov = nullptr;
-    reframework::API::Method* getCameraProjectionMatrix = nullptr;
-    void* sceneManager = nullptr;
-    bool initialized = false;
-    bool failed = false;
-} g_fn;
+static ref::CameraTransformResolver g_cameraResolver;
+
+// via.Camera.get_ProjectionMatrix — not part of the standard chain, resolved
+// separately for exact focal-length reads.
+static reframework::API::Method* g_getProjectionMatrix = nullptr;
+
+// Per-frame camera/transform cache. Invalidated together at the
+// camera-controller update pre-hook and at the end of OnPostBeginRendering,
+// so within a single render frame they hold the live primary camera and its
+// transform without re-walking the SceneManager chain.
+static void* g_cachedTransform = nullptr;
+static void* g_cachedCamera = nullptr;
+
+static void* GetCameraTransformCached() {
+    if (g_cachedTransform) return g_cachedTransform;
+    g_cachedTransform = g_cameraResolver.ResolveTransform(&g_cachedCamera);
+    return g_cachedTransform;
+}
 
 // GUI compensation method cache
 static struct {
@@ -66,13 +75,14 @@ static struct {
     reframework::API::TypeDefinition* playObjectRuntimeType = nullptr;
     bool resolved = false;
     bool giveUp = false;
-} g_guiCam;
 
-// Per-frame transform cache
-static struct {
-    void* ptr = nullptr;
-    ULONGLONG timeMs = 0;
-} g_txCache;
+    // Instance getters invoked per GUI element per frame, resolved once via
+    // InvokeCached. via.gui elements share these on their common base type, so
+    // a Method* resolved from one element dispatches correctly on every element.
+    reframework::API::Method* elemGetGameObject = nullptr;  // <element>.get_GameObject
+    reframework::API::Method* getGameObjectName = nullptr;  // via.GameObject.get_Name
+    reframework::API::Method* elemGetView = nullptr;        // <element>.get_View
+} g_guiCam;
 
 // Bumped once per render frame at the top of OnPreBeginRendering. The GUI draw
 // callbacks fire during that same frame's rendering, so this is a reliable
@@ -90,82 +100,6 @@ static struct {
     float fy = 0.f;
 } g_focalCache;
 
-// Per-frame cache for the resolved primary-camera managed object. The active
-// camera is invariant within a render frame, but both the FOV reader and the
-// projection-matrix reader walk SceneManager -> MainView -> PrimaryCamera to
-// find it. Resolve once per frame, reuse across both consumers. Only successful
-// (non-null) resolves are cached, so a transient miss is retried, not poisoned.
-static struct {
-    uint64_t epoch = static_cast<uint64_t>(-1);
-    reframework::API::ManagedObject* cam = nullptr;
-} g_primaryCamCache;
-
-static void* GetCameraTransform() {
-    ULONGLONG now = GetTickCount64();
-    if (g_txCache.ptr && now == g_txCache.timeMs) {
-        return g_txCache.ptr;
-    }
-
-    if (!g_fn.sceneManager) {
-        g_fn.sceneManager = reframework::API::get()->get_native_singleton("via.SceneManager");
-        if (!g_fn.sceneManager) return nullptr;
-    }
-    auto mv = InvokePtr(g_fn.getMainView, g_fn.sceneManager);
-    if (!mv) return nullptr;
-    auto cam = InvokePtr(g_fn.getPrimaryCamera, mv);
-    if (!cam) return nullptr;
-    auto go = InvokePtr(g_fn.getGameObject, cam);
-    if (!go) return nullptr;
-    void* tx = InvokePtr(g_fn.getTransform, go);
-
-    g_txCache.ptr = tx;
-    g_txCache.timeMs = now;
-    return tx;
-}
-
-// Resolve the active scene's primary camera as a managed object. Shared by the
-// FOV and projection-matrix readers, which both walk SceneManager -> MainView
-// -> PrimaryCamera before reading their respective property.
-static reframework::API::ManagedObject* GetPrimaryCamera() {
-    if (g_primaryCamCache.epoch == g_frameEpoch && g_primaryCamCache.cam) {
-        return g_primaryCamCache.cam;
-    }
-
-    if (!g_fn.getMainView || !g_fn.getPrimaryCamera) return nullptr;
-
-    void* sm = g_fn.sceneManager;
-    if (!sm) sm = reframework::API::get()->get_native_singleton("via.SceneManager");
-    if (!sm) return nullptr;
-
-    auto mv = g_fn.getMainView->invoke(
-        reinterpret_cast<reframework::API::ManagedObject*>(sm), EmptyArgs());
-    if (mv.exception_thrown || !mv.ptr) return nullptr;
-
-    auto cam = g_fn.getPrimaryCamera->invoke(
-        reinterpret_cast<reframework::API::ManagedObject*>(mv.ptr), EmptyArgs());
-    if (cam.exception_thrown || !cam.ptr) return nullptr;
-
-    auto* result = reinterpret_cast<reframework::API::ManagedObject*>(cam.ptr);
-    g_primaryCamCache.epoch = g_frameEpoch;
-    g_primaryCamCache.cam = result;
-    return result;
-}
-
-static float GetLivePrimaryCameraFov() {
-    if (!g_fn.getCameraFov) return 0.f;
-
-    auto cam = GetPrimaryCamera();
-    if (!cam) return 0.f;
-
-    auto fov = g_fn.getCameraFov->invoke(cam, EmptyArgs());
-    if (fov.exception_thrown) return 0.f;
-
-    float fovDeg = 0.f;
-    if (fov.f >= 10.f && fov.f <= 170.f) fovDeg = fov.f;
-    else { float fromD = static_cast<float>(fov.d); if (fromD >= 10.f && fromD <= 170.f) fovDeg = fromD; }
-    return fovDeg;
-}
-
 static void ApplyHeadTracking(Matrix4x4f* worldMat) {
     float yaw, pitch, roll;
     if (!Mod::Instance().GetProcessedRotation(yaw, pitch, roll)) return;
@@ -173,68 +107,36 @@ static void ApplyHeadTracking(Matrix4x4f* worldMat) {
     // Save the game's rotation axes BEFORE applying head rotation.
     Matrix4x4f preRotationAxes = *worldMat;
 
-    if (Mod::Instance().IsRotationEnabled()) {
-        float yr = -yaw * kDegToRad;
-        float pr = pitch * kDegToRad;
-        float rr = roll * kDegToRad;
+    float yr = -yaw * kDegToRad;
+    float pr = pitch * kDegToRad;
+    float rr = roll * kDegToRad;
 
-        if (Mod::Instance().IsWorldSpaceYaw()) {
-            float cy = cosf(yr), sy = -sinf(yr);
-            for (int r = 0; r < 3; r++) {
-                float x = worldMat->m[r][0];
-                float z = worldMat->m[r][2];
-                worldMat->m[r][0] = x * cy - z * sy;
-                worldMat->m[r][2] = x * sy + z * cy;
-            }
-
-            float cp = cosf(pr), sp = sinf(pr);
-            float cr = cosf(rr), sr = sinf(rr);
-            float prRot[3][3] = {
-                { cr,      sr,      0   },
-                {-cp*sr,   cp*cr,   sp  },
-                { sp*sr,  -sp*cr,   cp  }
-            };
-
-            ApplyRotation3x3ToColumns(*worldMat, prRot);
-        } else {
-            float hy = yr * 0.5f, hp = pr * 0.5f, hr = rr * 0.5f;
-            REQuat qy = {0, sinf(hy), 0, cosf(hy)};
-            REQuat qx = {sinf(hp), 0, 0, cosf(hp)};
-            REQuat qz = {0, 0, sinf(hr), cosf(hr)};
-            REQuat q = QuatNorm(QuatMul(QuatMul(qy, qx), qz));
-
-            float headRot[3][3];
-            QuatToMatrix3x3(q, headRot);
-
-            ApplyRotation3x3ToColumns(*worldMat, headRot);
-        }
+    if (Mod::Instance().IsWorldSpaceYaw()) {
+        ApplyWorldSpaceHeadRotation(*worldMat, yr, pr, rr);
+    } else {
+        ApplyCameraLocalHeadRotation(*worldMat, yr, pr, rr);
     }
 
-    // --- Position (6DOF) ---
     float px, py, pz;
     if (Mod::Instance().GetPositionOffset(px, py, pz)) {
-        px = -px;
-        const Matrix4x4f& gm = preRotationAxes;
-        worldMat->m[3][0] += px * gm.m[0][0] + py * gm.m[1][0] + pz * gm.m[2][0];
-        worldMat->m[3][1] += px * gm.m[0][1] + py * gm.m[1][1] + pz * gm.m[2][1];
-        worldMat->m[3][2] += px * gm.m[0][2] + py * gm.m[1][2] + pz * gm.m[2][2];
+        ApplyViewSpacePositionOffset(*worldMat, preRotationAxes, px, py, pz);
     }
 }
 
 // --- Hook on camera controller update ---
 static int CameraUpdatePreHook(int argc, void** argv, REFrameworkTypeDefinitionHandle* arg_tys, unsigned long long ret_addr) {
+    g_cachedTransform = nullptr;
+    g_cachedCamera = nullptr;
+
     if (!g_saved.hasGameMatrix || !Mod::Instance().IsEnabled()) {
         return REFRAMEWORK_HOOK_CALL_ORIGINAL;
     }
 
-    void* transform = nullptr;
-    __try { transform = GetCameraTransform(); } __except(EXCEPTION_EXECUTE_HANDLER) {
-        return REFRAMEWORK_HOOK_CALL_ORIGINAL;
-    }
+    void* transform = GetCameraTransformCached();
     if (!transform) return REFRAMEWORK_HOOK_CALL_ORIGINAL;
 
     Matrix4x4f* worldMat = reinterpret_cast<Matrix4x4f*>(
-        reinterpret_cast<uint8_t*>(transform) + TX_WORLDMATRIX_OFFSET);
+        reinterpret_cast<uint8_t*>(transform) + ref::kTransformWorldMatrixOffset);
     __try {
         *worldMat = g_saved.gameMatrix;
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
@@ -243,12 +145,11 @@ static int CameraUpdatePreHook(int argc, void** argv, REFrameworkTypeDefinitionH
 }
 
 static void CameraUpdatePostHook(void** ret_val, REFrameworkTypeDefinitionHandle ret_ty, unsigned long long ret_addr) {
-    void* transform = nullptr;
-    __try { transform = GetCameraTransform(); } __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+    void* transform = GetCameraTransformCached();
     if (!transform) return;
 
     Matrix4x4f* worldMat = reinterpret_cast<Matrix4x4f*>(
-        reinterpret_cast<uint8_t*>(transform) + TX_WORLDMATRIX_OFFSET);
+        reinterpret_cast<uint8_t*>(transform) + ref::kTransformWorldMatrixOffset);
     __try {
         g_saved.gameMatrix = *worldMat;
         g_saved.hasGameMatrix = true;
@@ -262,6 +163,40 @@ static void CameraUpdatePostHook(void** ret_val, REFrameworkTypeDefinitionHandle
     }
 }
 
+// --- Camera controller discovery ---
+
+// RE3 Remake's game code lives under the `offline` root namespace.
+// updateCameraPosition is the per-frame transform writer (matches REFramework's
+// own camera hook); the hooker's shared method-name list tries it first for
+// these types. Namespace changes and unknown controllers fall back to the
+// hooker's TDB short-name scan and parent-chain walk.
+static const char* const kControllerTypeCandidates[] = {
+    "offline.camera.PlayerCameraController",
+    "offline.PlayerCameraController",
+};
+
+static ref::CameraControllerHooker g_controllerHooker{
+    kControllerTypeCandidates,
+    static_cast<int>(std::size(kControllerTypeCandidates)),
+    CameraUpdatePreHook,
+    CameraUpdatePostHook};
+
+// Retry camera-controller discovery each gameplay frame until it succeeds.
+// The candidate fast path normally hooks at plugin init (see
+// InitCachedFunctions); this adds the parent-chain walk, which needs a live
+// gameplay camera rig to inspect.
+static void EnsureCameraControllerHooked() {
+    if (g_controllerHooker.IsHooked()) return;
+    if (g_controllerHooker.TryHook(GetCameraTransformCached())) return;
+
+    int attempts = g_controllerHooker.AttemptCount();
+    if (attempts == 1 || (attempts % 300) == 0) {
+        Logger::Instance().Warning(
+            "Camera controller hook not yet found (attempt %d) - head tracking "
+            "still active via the BeginRendering restore path", attempts);
+    }
+}
+
 // --- GUI compensation ---
 
 // Read focal lengths directly from the camera's projection matrix.
@@ -269,13 +204,14 @@ static void CameraUpdatePostHook(void** ret_val, REFrameworkTypeDefinitionHandle
 // Multiply by half-canvas to get pixel focal lengths.
 // No guessing about horizontal vs vertical FOV convention.
 static bool GetFocalLengthsFromProjectionMatrix(float& fx, float& fy) {
-    if (!g_fn.getCameraProjectionMatrix) return false;
+    if (!g_getProjectionMatrix) return false;
 
-    auto cam = GetPrimaryCamera();
+    void* cam = g_cachedCamera ? g_cachedCamera : g_cameraResolver.ResolveCamera();
     if (!cam) return false;
 
     // get_ProjectionMatrix is a property getter — no arguments, returns Matrix4x4
-    auto ret = g_fn.getCameraProjectionMatrix->invoke(cam, EmptyArgs());
+    auto ret = g_getProjectionMatrix->invoke(
+        reinterpret_cast<reframework::API::ManagedObject*>(cam), ref::EmptyArgs());
     if (ret.exception_thrown) return false;
 
     // Matrix4x4 (64 bytes) returned in ret.bytes — row-major [row][col]
@@ -283,10 +219,10 @@ static bool GetFocalLengthsFromProjectionMatrix(float& fx, float& fy) {
     float p00 = retMat[0];   // m[0][0]
     float p11 = retMat[5];   // m[1][1]
 
-    if (p00 < 0.1f || p00 > 20.f || p11 < 0.1f || p11 > 20.f) return false;
-
-    fx = p00 * kHalfReferenceCanvasWidth;
-    fy = p11 * kHalfReferenceCanvasHeight;
+    if (!cameraunlock::rendering::FocalLengthsFromProjection(
+            p00, p11, kHalfReferenceCanvasWidth, kHalfReferenceCanvasHeight, fx, fy)) {
+        return false;
+    }
 
     static bool s_logged = false;
     if (!s_logged) {
@@ -315,12 +251,11 @@ static bool GetMarkerProjectionFocalLengths(float& fx, float& fy) {
     }
 
     // Fallback to get_FOV (assume vertical for safety)
-    constexpr float kAspect = kHalfReferenceCanvasWidth / kHalfReferenceCanvasHeight;
-    float fov = GetLivePrimaryCameraFov();
-    if (fov < 10.f || fov > 170.f) return false;
-    float tanHFovY = tanf(fov * kDegToRad * 0.5f);
-    fx = kHalfReferenceCanvasWidth / (tanHFovY * kAspect);
-    fy = kHalfReferenceCanvasHeight / tanHFovY;
+    float fov = g_cameraResolver.ResolveFovDegrees(g_cachedCamera);
+    if (!cameraunlock::rendering::FocalLengthsFromVerticalFov(
+            fov, kHalfReferenceCanvasWidth, kHalfReferenceCanvasHeight, fx, fy)) {
+        return false;
+    }
     g_focalCache.ok = true;
     g_focalCache.fx = fx;
     g_focalCache.fy = fy;
@@ -367,28 +302,18 @@ static void InitGUICompensationMethods() {
 // --- OnPreGuiDrawElement callback ---
 // Logs unique GUI element names for discovery, then applies marker/crosshair compensation.
 
-// Read a managed string into a char buffer. Separated from the main callback
-// to keep SEH (__try) out of functions with C++ destructors.
-static bool ReadGuiElementName(void* guiMo, char* out, size_t outSize) {
+// Resolve a GUI element's GameObject name into a char buffer.
+static bool ReadGuiElementName(reframework::API::ManagedObject* mo, char* out, size_t outSize) {
     out[0] = 0;
-    auto mo = reinterpret_cast<reframework::API::ManagedObject*>(guiMo);
 
-    auto goRet = mo->invoke("get_GameObject", EmptyArgs());
+    auto goRet = ref::InvokeCached(mo, g_guiCam.elemGetGameObject, "get_GameObject", ref::EmptyArgs());
     if (goRet.exception_thrown || !goRet.ptr) return false;
 
     auto goMo = reinterpret_cast<reframework::API::ManagedObject*>(goRet.ptr);
-    auto nameRet = goMo->invoke("get_Name", EmptyArgs());
+    auto nameRet = ref::InvokeCached(goMo, g_guiCam.getGameObjectName, "get_Name", ref::EmptyArgs());
     if (nameRet.exception_thrown || !nameRet.ptr) return false;
 
-    __try {
-        auto* raw = reinterpret_cast<uint8_t*>(nameRet.ptr);
-        uint32_t strLen = *reinterpret_cast<uint32_t*>(raw + 0x10);
-        if (strLen > outSize - 1) strLen = static_cast<uint32_t>(outSize - 1);
-        auto* chars = reinterpret_cast<uint16_t*>(raw + 0x14);
-        for (uint32_t i = 0; i < strLen; i++) out[i] = (char)chars[i];
-        out[strLen] = 0;
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-
+    ref::ReadManagedString(nameRet.ptr, out, outSize);
     return out[0] != 0;
 }
 
@@ -403,13 +328,12 @@ static void OffsetGuiElementToAimPoint(reframework::API::ManagedObject* mo) {
     float deltaX = -g_crosshair.tanRight * fx;
     float deltaY =  g_crosshair.tanUp * fy;
 
-    auto viewRet = mo->invoke("get_View", EmptyArgs());
+    auto viewRet = ref::InvokeCached(mo, g_guiCam.elemGetView, "get_View", ref::EmptyArgs());
     if (viewRet.exception_thrown || !viewRet.ptr) return;
 
     auto view = reinterpret_cast<reframework::API::ManagedObject*>(viewRet.ptr);
     float pos[3] = { deltaX, deltaY, 0.f };
-    void* setArgs[1] = { &pos[0] };
-    g_guiCam.transformSetPosition->invoke(view, std::span<void*>(setArgs));
+    ref::InvokeMethodWithArg(g_guiCam.transformSetPosition, view, &pos[0]);
 
     static bool s_diagOnce = false;
     if (!s_diagOnce) {
@@ -435,8 +359,10 @@ bool OnPreGuiDrawElement(void* element, void* context) {
     // In this REFramework SDK version, 'element' is the GUI ManagedObject directly.
     if (!element) return true;
 
+    auto mo = reinterpret_cast<reframework::API::ManagedObject*>(element);
+
     char goName[128] = {};
-    if (!ReadGuiElementName(element, goName, sizeof(goName))) return true;
+    if (!ReadGuiElementName(mo, goName, sizeof(goName))) return true;
 
     // Log unique GUI element names for discovery. This callback fires once per
     // GUI element per frame, so the lookup must not allocate in steady state:
@@ -457,8 +383,6 @@ bool OnPreGuiDrawElement(void* element, void* context) {
         InitGUICompensationMethods();
     }
 
-    auto mo = reinterpret_cast<reframework::API::ManagedObject*>(element);
-
     if (g_crosshair.valid && g_guiCam.transformSetPosition && IsAimCompensatedGuiElement(goName)) {
         if (!IsInGameplay()) return true;
         OffsetGuiElementToAimPoint(mo);
@@ -470,118 +394,86 @@ bool OnPreGuiDrawElement(void* element, void* context) {
 // --- Initialization ---
 
 static bool InitCachedFunctions() {
-    if (g_fn.initialized) return !g_fn.failed;
-    g_fn.initialized = true;
+    static bool s_attempted = false;
+    if (s_attempted) return !g_cameraResolver.HasFailed();
+    s_attempted = true;
 
-    const auto& api = reframework::API::get();
-    auto tdb = api->tdb();
-    auto smType = tdb->find_type("via.SceneManager");
-    auto svType = tdb->find_type("via.SceneView");
+    if (!g_cameraResolver.Initialize()) return false;
+
+    auto tdb = reframework::API::get()->tdb();
     auto camType = tdb->find_type("via.Camera");
-    auto goType = tdb->find_type("via.GameObject");
-
-    if (!smType || !svType || !camType || !goType) { g_fn.failed = true; return false; }
-
-    g_fn.getMainView = smType->find_method("get_MainView");
-    g_fn.getPrimaryCamera = svType->find_method("get_PrimaryCamera");
-    g_fn.getGameObject = camType->find_method("get_GameObject");
-    g_fn.getTransform = goType->find_method("get_Transform");
-    g_fn.getCameraFov = camType->find_method("get_FOV");
-    g_fn.getCameraProjectionMatrix = camType->find_method("get_ProjectionMatrix");
-    if (!g_fn.getCameraProjectionMatrix)
-        Logger::Instance().Warning("via.Camera.get_ProjectionMatrix not found — will fall back to get_FOV");
-
-    if (!g_fn.getMainView || !g_fn.getPrimaryCamera || !g_fn.getGameObject || !g_fn.getTransform) {
-        g_fn.failed = true;
-        return false;
+    g_getProjectionMatrix = camType ? camType->find_method("get_ProjectionMatrix") : nullptr;
+    if (!g_getProjectionMatrix) {
+        Logger::Instance().Warning("via.Camera.get_ProjectionMatrix not found - will fall back to get_FOV");
     }
 
-    if (!g_fn.getCameraFov) {
-        Logger::Instance().Warning("via.Camera.get_FOV not found — crosshair projection will use fallback FOV");
-    }
-
-    // Hook camera controller update for save/restore
-    struct CameraHookCandidate {
-        const char* typeName;
-        const char* methodName;
-    };
-
-    CameraHookCandidate candidates[] = {
-        // RE3 Remake uses the `offline` root namespace. updateCameraPosition is
-        // the per-frame transform writer (matches REFramework's own camera hook).
-        {"offline.camera.PlayerCameraController", "updateCameraPosition"},
-        {"offline.camera.PlayerCameraController", "lateUpdate"},
-        {"offline.camera.PlayerCameraController", "update"},
-        {"offline.PlayerCameraController", "updateCameraPosition"},
-        {"offline.PlayerCameraController", "update"},
-        // RE2 Remake (app.ropeway) fallbacks — harmless when absent.
-        {"app.ropeway.camera.PlayerCameraController", "updateCameraPosition"},
-        {"app.ropeway.camera.CameraSystem", "update"},
-        {"app.ropeway.PlayerCameraController", "update"},
-    };
-
-    bool hooked = false;
-    for (const auto& candidate : candidates) {
-        auto pccType = tdb->find_type(candidate.typeName);
-        if (pccType) {
-            auto method = pccType->find_method(candidate.methodName);
-            if (method) {
-                auto id = method->add_hook(CameraUpdatePreHook, CameraUpdatePostHook, false);
-                Logger::Instance().Info("Hooked %s.%s (id=%u)", candidate.typeName, candidate.methodName, id);
-                hooked = true;
-                break;
-            }
-        }
-    }
-
-    // Namespace-agnostic fallback: scan the TDB for any PlayerCameraController and
-    // hook its per-frame writer. Self-discovers the type if a future engine build
-    // renames the namespace out from under the candidate list above.
-    if (!hooked) {
-        const char* methodNames[] = { "updateCameraPosition", "lateUpdate", "update" };
-        auto numTypes = tdb->get_num_types();
-        for (uint32_t i = 0; i < numTypes && !hooked; i++) {
-            auto type = tdb->get_type(i);
-            if (!type) continue;
-            const char* name = type->get_name();
-            if (!name || strcmp(name, "PlayerCameraController") != 0) continue;
-            const char* ns = type->get_namespace();
-            for (const char* mn : methodNames) {
-                auto method = type->find_method(mn);
-                if (method) {
-                    auto id = method->add_hook(CameraUpdatePreHook, CameraUpdatePostHook, false);
-                    Logger::Instance().Info("Hooked (auto) %s.%s.%s (id=%u)", ns ? ns : "", name, mn, id);
-                    hooked = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!hooked) {
-        Logger::Instance().Warning("Camera controller hook NOT installed — aim will couple to head view");
+    // Hook the camera controller from the candidate / TDB short-name fast
+    // paths right away (the offline.* types exist in the TDB before gameplay
+    // starts). The parent-chain walk needs a live camera rig, so it runs from
+    // EnsureCameraControllerHooked during gameplay if this misses.
+    if (!g_controllerHooker.TryHook(nullptr)) {
+        Logger::Instance().Warning("Camera controller hook not installed at init - retrying during gameplay");
     }
 
     Logger::Instance().Info("Methods cached");
     return true;
 }
 
+// Project the clean aim direction into the head-tracked view to derive the
+// screen-space tangents (and live FOV) the GUI compensation reads. The smoothed
+// state persists across frames to suppress perspective-division and per-frame
+// FOV jitter.
+static void UpdateCrosshairProjection(const Matrix4x4f& clean, const Matrix4x4f& head) {
+    constexpr float kAimDist = 50.0f;
+    float rawTanRight = 0.f, rawTanUp = 0.f;
+    if (!ProjectAimToViewTangents(clean, head, kAimDist, rawTanRight, rawTanUp)) {
+        g_crosshair.valid = false;
+        return;
+    }
+
+    float rawFov = g_cameraResolver.ResolveFovDegrees(g_cachedCamera);
+    if (rawFov <= 10.f) rawFov = g_crosshair.fovDegrees;
+
+    // Smooth screen-space projection values to eliminate jitter from
+    // perspective-division noise and per-frame FOV fluctuations.
+    float dt = Mod::Instance().GetLastDeltaTime();
+    constexpr float kCrosshairSmoothing = static_cast<float>(cameraunlock::math::kBaselineSmoothing);
+
+    static cameraunlock::math::SmoothedFloat s_tanRight;
+    static cameraunlock::math::SmoothedFloat s_tanUp;
+    static cameraunlock::math::SmoothedFloat s_fov;
+
+    g_crosshair.tanRight = s_tanRight.Update(rawTanRight, kCrosshairSmoothing, dt);
+    g_crosshair.tanUp = s_tanUp.Update(rawTanUp, kCrosshairSmoothing, dt);
+    g_crosshair.fovDegrees = s_fov.Update(rawFov, kCrosshairSmoothing, dt);
+    g_crosshair.valid = g_crosshair.fovDegrees > 10.f;
+}
+
 // --- Pre-BeginRendering: apply head tracking for rendering ---
 void OnPreBeginRendering() {
-    g_frameEpoch++;
+    // Drain hotkey requests on the render thread so recenter / mode-cycle
+    // never mutate session state concurrently with the pipeline tick below.
+    Mod::Instance().ProcessDeferredActions();
+
     if (!InitCachedFunctions()) return;
     if (!Mod::Instance().IsEnabled()) return;
     if (!IsInGameplay()) return;
+    EnsureCameraControllerHooked();
+    g_frameEpoch++;
     if (ShouldRecenter()) {
         Mod::Instance().Recenter();
     }
 
-    void* transform = nullptr;
-    __try { transform = GetCameraTransform(); } __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+    // Advance interpolation + smoothing once per render frame. Every
+    // downstream consumer (ApplyHeadTracking, crosshair projection, GUI
+    // compensation) reads cached values from this tick.
+    Mod::Instance().TickFrame();
+
+    void* transform = GetCameraTransformCached();
     if (!transform) return;
 
     Matrix4x4f* worldMat = reinterpret_cast<Matrix4x4f*>(
-        reinterpret_cast<uint8_t*>(transform) + TX_WORLDMATRIX_OFFSET);
+        reinterpret_cast<uint8_t*>(transform) + ref::kTransformWorldMatrixOffset);
 
     // Save the clean matrix before applying head tracking
     g_cleanCameraMatrix.matrix = *worldMat;
@@ -590,64 +482,7 @@ void OnPreBeginRendering() {
     ApplyHeadTracking(worldMat);
     g_trackingAppliedThisFrame = true;
 
-    // Crosshair projection
-    {
-        const Matrix4x4f& clean = g_cleanCameraMatrix.matrix;
-        const Matrix4x4f& head = *worldMat;
-
-        constexpr float kAimDist = 50.0f;
-        float aimPtX = clean.m[3][0] + kAimDist * clean.m[2][0];
-        float aimPtY = clean.m[3][1] + kAimDist * clean.m[2][1];
-        float aimPtZ = clean.m[3][2] + kAimDist * clean.m[2][2];
-
-        float dx = aimPtX - head.m[3][0];
-        float dy = aimPtY - head.m[3][1];
-        float dz = aimPtZ - head.m[3][2];
-
-        float vx = dx * head.m[0][0] + dy * head.m[0][1] + dz * head.m[0][2];
-        float vy = dx * head.m[1][0] + dy * head.m[1][1] + dz * head.m[1][2];
-        float vz = dx * head.m[2][0] + dy * head.m[2][1] + dz * head.m[2][2];
-
-        if (vz > 1e-4f) {
-            float rawTanRight = vx / vz;
-            float rawTanUp = vy / vz;
-            float liveFov = GetLivePrimaryCameraFov();
-            float rawFov = (liveFov > 10.f) ? liveFov : g_crosshair.fovDegrees;
-
-            // Smooth screen-space projection values to eliminate jitter from
-            // perspective-division noise and per-frame FOV fluctuations.
-            float dt = Mod::Instance().GetLastDeltaTime();
-            constexpr float kCrosshairSmoothing = static_cast<float>(cameraunlock::math::kBaselineSmoothing);
-            float t = cameraunlock::math::CalculateSmoothingFactor(kCrosshairSmoothing, dt);
-
-            static float s_smoothedTanRight = 0.f;
-            static float s_smoothedTanUp = 0.f;
-            static float s_smoothedFov = 75.f;
-            static bool s_initialized = false;
-
-            if (!s_initialized) {
-                s_smoothedTanRight = rawTanRight;
-                s_smoothedTanUp = rawTanUp;
-                s_smoothedFov = rawFov;
-                s_initialized = true;
-            } else {
-                s_smoothedTanRight = cameraunlock::math::Lerp(s_smoothedTanRight, rawTanRight, t);
-                s_smoothedTanUp = cameraunlock::math::Lerp(s_smoothedTanUp, rawTanUp, t);
-                s_smoothedFov = cameraunlock::math::Lerp(s_smoothedFov, rawFov, t);
-            }
-
-            g_crosshair.tanRight = s_smoothedTanRight;
-            g_crosshair.tanUp = s_smoothedTanUp;
-            g_crosshair.fovDegrees = s_smoothedFov;
-            g_crosshair.valid = g_crosshair.fovDegrees > 10.f;
-
-            float roll = 0.f, yaw = 0.f, pitch = 0.f;
-            Mod::Instance().GetProcessedRotation(yaw, pitch, roll);
-            g_crosshair.rollDegrees = Mod::Instance().IsRotationEnabled() ? roll : 0.f;
-        } else {
-            g_crosshair.valid = false;
-        }
-    }
+    UpdateCrosshairProjection(g_cleanCameraMatrix.matrix, *worldMat);
 }
 
 // Post-BeginRendering: restore clean ROTATION so aim direction follows the
@@ -661,12 +496,14 @@ void OnPostBeginRendering() {
 
     if (!g_cleanCameraMatrix.valid) return;
 
-    void* transform = nullptr;
-    __try { transform = GetCameraTransform(); } __except(EXCEPTION_EXECUTE_HANDLER) { return; }
+    // OnPreBeginRendering populated the per-frame transform cache this frame
+    // (g_trackingAppliedThisFrame is only set after that succeeded), so reuse
+    // it rather than re-walking the SceneManager chain.
+    void* transform = GetCameraTransformCached();
     if (!transform) return;
 
     Matrix4x4f* worldMat = reinterpret_cast<Matrix4x4f*>(
-        reinterpret_cast<uint8_t*>(transform) + TX_WORLDMATRIX_OFFSET);
+        reinterpret_cast<uint8_t*>(transform) + ref::kTransformWorldMatrixOffset);
     __try {
         // Save head-tracked position before restoring
         float hx = worldMat->m[3][0];
@@ -681,6 +518,9 @@ void OnPostBeginRendering() {
         worldMat->m[3][1] = hy;
         worldMat->m[3][2] = hz;
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
+
+    g_cachedTransform = nullptr;
+    g_cachedCamera = nullptr;
 }
 
 } // namespace RE3HT

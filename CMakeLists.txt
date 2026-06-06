@@ -10,8 +10,10 @@ if(WIN32)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
-# cameraunlock-core shared library (static)
+# cameraunlock-core shared library (static) with REFramework utilities
 set(CAMERAUNLOCK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CAMERAUNLOCK_BUILD_REFRAMEWORK ON CACHE BOOL "" FORCE)
+set(CAMERAUNLOCK_REFRAMEWORK_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/extern CACHE PATH "" FORCE)
 add_subdirectory(cameraunlock-core/cpp ${CMAKE_BINARY_DIR}/cameraunlock-core)
 
 # Plugin sources
@@ -33,7 +35,7 @@ set_target_properties(RE3HeadTracking PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
 )
 
-target_link_libraries(RE3HeadTracking PRIVATE cameraunlock ws2_32)
+target_link_libraries(RE3HeadTracking PRIVATE cameraunlock cameraunlock_reframework ws2_32)
 
 target_include_directories(RE3HeadTracking PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src

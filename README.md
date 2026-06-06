@@ -1,3 +1,10 @@
+> [!CAUTION]
+> ## Experimental prototype - expect missing core features
+>
+> This is **not** a finished mod.
+>
+> Current builds may only test whether head tracking can drive the camera. Bug fixes and core features like decoupled look/aim, independent reticle behavior, correct shot direction, off-screen reticle support, movement handling, and comfort tuning may be missing at this early stage of development.
+
 # Resident Evil 3 Head Tracking
 
 Head tracking for Resident Evil 3 Remake that decouples looking from aiming, so your head moves the camera view through OpenTrack while the mouse or controller still aims independently, with no VR headset required.
