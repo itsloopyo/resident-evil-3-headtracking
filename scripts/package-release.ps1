@@ -111,6 +111,22 @@ foreach ($doc in $docFiles) {
     }
 }
 
+# launcher-manifest.json: the contract Lopari reads at the ZIP root. Stamp the
+# release version and regenerate the write-once config seed from the live
+# HeadTracking.ini so the shipped manifest never drifts from what install.cmd
+# actually deploys. The committed copy is the audit reference; this staged copy
+# is what the launcher consumes.
+$launcherManifestPath = Join-Path $projectDir "launcher-manifest.json"
+if (-not (Test-Path $launcherManifestPath)) {
+    throw "launcher-manifest.json not found at: $launcherManifestPath."
+}
+$lm = Get-Content $launcherManifestPath -Raw | ConvertFrom-Json
+$lm.mod_info.version = $version
+$iniBytes = [System.IO.File]::ReadAllBytes($iniPath)
+$lm.loader.seed[0].content_b64 = [System.Convert]::ToBase64String($iniBytes)
+$lm | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $ghStagingDir "launcher-manifest.json") -NoNewline
+Write-Host "  launcher-manifest.json (v$version)" -ForegroundColor Green
+
 $ghZipName = "RE3HeadTracking-v$version-installer.zip"
 $ghZipPath = Join-Path $releaseDir $ghZipName
 if (Test-Path $ghZipPath) { Remove-Item $ghZipPath -Force }

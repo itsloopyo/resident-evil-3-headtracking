@@ -127,6 +127,16 @@ if (Test-Path $installCmdPath) {
         Set-Content $installCmdPath -NoNewline
 }
 
+# Keep the launcher contract (launcher-manifest.json) version in lockstep.
+# The packager re-stamps this on the shipped copy, but the committed file is
+# the audit reference and must read the released version too.
+$launcherManifestPath = Join-Path $projectDir "launcher-manifest.json"
+if (Test-Path $launcherManifestPath) {
+    $lm = Get-Content $launcherManifestPath -Raw | ConvertFrom-Json
+    $lm.mod_info.version = $Version
+    $lm | ConvertTo-Json -Depth 20 | Set-Content $launcherManifestPath -NoNewline
+}
+
 Write-Host "Building Release configuration..." -ForegroundColor Cyan
 pixi run build
 if ($LASTEXITCODE -ne 0) {
@@ -153,6 +163,7 @@ if (-not $hasExistingTags) {
 Write-Host "Committing version change..." -ForegroundColor Cyan
 $filesToStage = @($manifestPath, $cmakePath, $constantsPath, $changelogPath)
 if (Test-Path $installCmdPath) { $filesToStage += $installCmdPath }
+if (Test-Path $launcherManifestPath) { $filesToStage += $launcherManifestPath }
 git add -- $filesToStage
 git commit -m "Release v$Version"
 if ($LASTEXITCODE -ne 0) {
