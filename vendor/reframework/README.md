@@ -6,12 +6,12 @@ Refresh manually with `pixi run update-deps`, then commit.
 
 ## Snapshot
 
-- Asset: `RE3.zip`
-- Tag: `nightly-01366-6216ec39697c5b3469e08baf0b98db0baff49c49`
+- Asset: `REFramework.zip`
+- Tag: `nightly-01383-1f45c83a45a228e8e82d8bd151008a91966a8700`
 - Commit: `0436e043af6f81a5d3fef49ae27d35e63431e566`
-- Upstream URL: https://github.com/praydog/REFramework-nightly/releases/download/nightly-01366-6216ec39697c5b3469e08baf0b98db0baff49c49/RE3.zip
-- SHA-256: `7dae046c1a22ba5b801aa479c53dae7db75b8d2048928a80249483cd70c8d6c5`
-- Fetched at: 2026-05-29T08:23:05.3602203+01:00
+- Upstream URL: https://github.com/praydog/REFramework-nightly/releases/download/nightly-01383-1f45c83a45a228e8e82d8bd151008a91966a8700/REFramework.zip
+- SHA-256: `e39a6405e7a1cf5c141bb87f068b607868a99daca2f1a835dcf7cd9533270a10`
+- Fetched at: 2026-06-07T17:10:17.8098180+01:00
 - Source: github
 
 Do not edit this directory by hand. Run ``pixi run package`` (or CI release) to refresh.
