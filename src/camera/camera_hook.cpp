@@ -13,6 +13,7 @@
 #include <cameraunlock/rendering/gui_marker_compensation.h>
 #include <unordered_set>
 #include <string>
+#include <cmath>
 
 namespace RE3HT {
 
@@ -45,6 +46,14 @@ static struct {
     Matrix4x4f matrix;
     bool valid = false;
 } g_cleanCameraMatrix;
+
+// Head-tracked camera matrix for the same frame, captured right after head
+// tracking is applied. World-anchored markers reproject their own clean-view
+// screen anchor through the clean -> head rotation to stay pinned in yaw.
+static struct {
+    Matrix4x4f matrix;
+    bool valid = false;
+} g_headCameraMatrix;
 
 static bool g_trackingAppliedThisFrame = false;
 
@@ -317,11 +326,12 @@ static bool ReadGuiElementName(reframework::API::ManagedObject* mo, char* out, s
     return out[0] != 0;
 }
 
-// Shift a GUI element's view to the head-tracked aim point so the reticle/HUD/
-// world markers stay on the clean aim direction the game fires along. Shared by
-// every compensated element; caller guarantees g_crosshair.valid, an installed
-// transformSetPosition method, and active gameplay.
-static void OffsetGuiElementToAimPoint(reframework::API::ManagedObject* mo) {
+// Shift a GUI element's view to the head-tracked screen position of the clean
+// aim point so the reticle, HUD, and world-anchored markers stay locked to where
+// the game is aiming while the head turns the view. Shared by every compensated
+// element; caller guarantees g_crosshair.valid, an installed transformSetPosition
+// method, and active gameplay.
+static void OffsetGuiElementToAimPoint(reframework::API::ManagedObject* mo, const char* name) {
     float fx = 0.f, fy = 0.f;
     if (!GetMarkerProjectionFocalLengths(fx, fy)) return;
 
@@ -335,22 +345,139 @@ static void OffsetGuiElementToAimPoint(reframework::API::ManagedObject* mo) {
     float pos[3] = { deltaX, deltaY, 0.f };
     ref::InvokeMethodWithArg(g_guiCam.transformSetPosition, view, &pos[0]);
 
-    static bool s_diagOnce = false;
-    if (!s_diagOnce) {
-        s_diagOnce = true;
-        Logger::Instance().Info("Crosshair offset applied: fov=%.1f tanR=%.4f tanU=%.4f dX=%.1f dY=%.1f",
-            g_crosshair.fovDegrees, g_crosshair.tanRight, g_crosshair.tanUp, deltaX, deltaY);
+    static std::unordered_set<std::string> s_diagNames;
+    if (s_diagNames.size() < 8 && s_diagNames.insert(std::string(name)).second) {
+        Logger::Instance().Info("Compensation applied to \"%s\": fov=%.1f tanR=%.4f tanU=%.4f dX=%.1f dY=%.1f",
+            name, g_crosshair.fovDegrees, g_crosshair.tanRight, g_crosshair.tanUp, deltaX, deltaY);
     }
 }
 
-// GUI elements whose view follows the aim point: world-anchored floating markers
-// plus the reticle and bullet-count HUD. RE3 uses a simpler GUI hierarchy than
-// requiem, so a single center-delta on the element's view covers all of them.
-static bool IsAimCompensatedGuiElement(const char* name) {
-    return strcmp(name, "GUI_FloatIcon") == 0
-        || strcmp(name, "GUI_Purpose") == 0
-        || strcmp(name, "GUI_Reticle") == 0
+// Diagnostic: during gameplay, log every unique GUI element reaching the draw
+// callback with its element type and descendant PlayObject count. RE Engine
+// titles vary in whether the gameplay HUD/markers arrive as flat top-level
+// elements (RE2: GUI_FloatIcon/GUI_Reticle) or as containers walked via
+// findObjects (RE9: Gui_ui2010 + children). RE3's structure is unknown until a
+// session runs with the HUD on screen; this dump reveals the real names and
+// nesting so compensation can target the correct elements.
+static void DumpGuiStructure(reframework::API::ManagedObject* mo, const char* name) {
+    static std::unordered_set<std::string> s_dumped;
+    if (s_dumped.size() >= 80 || !s_dumped.insert(std::string(name)).second) return;
+
+    const char* typeName = "?";
+    auto td = mo->get_type_definition();
+    if (td && td->get_name()) typeName = td->get_name();
+
+    uint32_t descendants = 0;
+    if (g_guiCam.guiFindObjectsByType && g_guiCam.playObjectRuntimeType) {
+        std::vector<void*> findArgs = { (void*)g_guiCam.playObjectRuntimeType };
+        auto arrRet = g_guiCam.guiFindObjectsByType->invoke(mo, findArgs);
+        if (!arrRet.exception_thrown && arrRet.ptr) {
+            auto arr = reinterpret_cast<reframework::API::ManagedObject*>(arrRet.ptr);
+            auto lenRet = arr->invoke("get_Length", ref::EmptyArgs());
+            if (!lenRet.exception_thrown) descendants = lenRet.dword;
+        }
+    }
+
+    Logger::Instance().Info("GUI gameplay element: \"%s\" type=%s descendants=%u", name, typeName, descendants);
+}
+
+// Pin a world-anchored marker (GUI_FloatIcon) to its world target. Read the
+// marker's true anchor from child[1] "main" (a Panel) after zeroing the root View
+// (so the read reflects the game's clean projection, not our prior offset, under
+// the engine's several-draws-per-frame), reproject it through the head rotation,
+// and shift the whole marker (the View) by the delta. Only the View and child[1]
+// are touched - never the Text/Circle children whose get_GlobalPosition returns
+// garbage and crashes the game.
+static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* name) {
+    if (!g_headCameraMatrix.valid || !g_cleanCameraMatrix.valid) return;
+    if (!g_guiCam.transformSetPosition || !g_guiCam.transformGetGlobalPosition
+        || !g_guiCam.guiFindObjectsByType || !g_guiCam.playObjectRuntimeType) {
+        return;
+    }
+
+    float fx = 0.f, fy = 0.f;
+    if (!GetMarkerProjectionFocalLengths(fx, fy)) return;
+
+    // Square pixels: the pixel focal length is identical on both axes. RE3's
+    // projection matrix reports P00 inconsistent with P11 (fx ends up half of fy,
+    // a non-16:9 FOV ratio), which under-compensated yaw by 2x and drifted the
+    // marker horizontally while pitch (which uses fy) stayed glued. fy is the
+    // verified-correct value, so use it for both axes.
+    fx = fy;
+
+    auto viewRet = ref::InvokeCached(mo, g_guiCam.elemGetView, "get_View", ref::EmptyArgs());
+    if (viewRet.exception_thrown || !viewRet.ptr) return;
+    auto view = reinterpret_cast<reframework::API::ManagedObject*>(viewRet.ptr);
+
+    // Zero our prior offset so the anchor read reflects the game's clean projection.
+    float zero[3] = { 0.f, 0.f, 0.f };
+    ref::InvokeMethodWithArg(g_guiCam.transformSetPosition, view, &zero[0]);
+
+    std::vector<void*> findArgs = { (void*)g_guiCam.playObjectRuntimeType };
+    auto arrRet = g_guiCam.guiFindObjectsByType->invoke(mo, findArgs);
+    if (arrRet.exception_thrown || !arrRet.ptr) return;
+    auto arr = reinterpret_cast<reframework::API::ManagedObject*>(arrRet.ptr);
+    auto lenRet = arr->invoke("get_Length", ref::EmptyArgs());
+    if (lenRet.exception_thrown || lenRet.dword < 2) return;
+
+    auto main = ref::ArrayGetValue(arr, 1);
+    if (!main) return;
+    auto gpRet = g_guiCam.transformGetGlobalPosition->invoke(main, ref::EmptyArgs());
+    if (gpRet.exception_thrown) return;
+    float gx = *reinterpret_cast<const float*>(&gpRet.bytes[0]);
+    float gy = *reinterpret_cast<const float*>(&gpRet.bytes[4]);
+    if (!std::isfinite(gx) || !std::isfinite(gy) || fabsf(gx) > 3000.f || fabsf(gy) > 2000.f) {
+        return;
+    }
+
+    // Reproject the marker's clean-view anchor into the head-tracked view. The
+    // sign convention (canvas X = -camera-right tangent, canvas Y = +camera-up
+    // tangent) was derived from measured head-yaw/pitch sweeps, not guessed:
+    // pure yaw produces near-zero vertical delta only with the -X mapping, and
+    // pure pitch matches the verified centre-offset only with the +Y mapping.
+    const Matrix4x4f& clean = g_cleanCameraMatrix.matrix;
+    const Matrix4x4f& head = g_headCameraMatrix.matrix;
+
+    float tcr = -(gx - kHalfReferenceCanvasWidth)  / fx;
+    float tcu =  (gy - kHalfReferenceCanvasHeight) / fy;
+
+    float wx = clean.m[2][0] + tcr * clean.m[0][0] + tcu * clean.m[1][0];
+    float wy = clean.m[2][1] + tcr * clean.m[0][1] + tcu * clean.m[1][1];
+    float wz = clean.m[2][2] + tcr * clean.m[0][2] + tcu * clean.m[1][2];
+
+    float vx = wx * head.m[0][0] + wy * head.m[0][1] + wz * head.m[0][2];
+    float vy = wx * head.m[1][0] + wy * head.m[1][1] + wz * head.m[1][2];
+    float vz = wx * head.m[2][0] + wy * head.m[2][1] + wz * head.m[2][2];
+    if (vz <= 1e-4f) return;
+
+    float newCanvasX = kHalfReferenceCanvasWidth  - (vx / vz) * fx;
+    float newCanvasY = kHalfReferenceCanvasHeight + (vy / vz) * fy;
+
+    float delta[3] = { newCanvasX - gx, newCanvasY - gy, 0.f };
+    ref::InvokeMethodWithArg(g_guiCam.transformSetPosition, view, &delta[0]);
+
+    static uint64_t s_lastLogEpoch = 0;
+    if (g_frameEpoch != s_lastLogEpoch && (g_frameEpoch % 30) == 0) {
+        s_lastLogEpoch = g_frameEpoch;
+        float yaw = 0.f, pitch = 0.f, roll = 0.f;
+        Mod::Instance().GetProcessedRotation(yaw, pitch, roll);
+        Logger::Instance().Info("World marker yaw=%.1f pitch=%.1f anchor=(%.0f,%.0f) delta=(%.1f,%.1f)",
+            yaw, pitch, gx, gy, delta[0], delta[1]);
+    }
+}
+
+// The reticle and bullet-count HUD sit at screen centre on the clean aim
+// direction, so a single centre delta is exactly right for them.
+static bool IsReticleGuiElement(const char* name) {
+    return strcmp(name, "GUI_Reticle") == 0
         || strcmp(name, "GUI_RemainingBullet") == 0;
+}
+
+// World-anchored floating markers are off centre, so they reproject their own
+// screen anchor through the head rotation rather than taking the centre delta.
+static bool IsWorldMarkerGuiElement(const char* name) {
+    return strcmp(name, "GUI_FloatIcon") == 0
+        || strcmp(name, "GUI_Purpose") == 0;
 }
 
 bool OnPreGuiDrawElement(void* element, void* context) {
@@ -383,9 +510,16 @@ bool OnPreGuiDrawElement(void* element, void* context) {
         InitGUICompensationMethods();
     }
 
-    if (g_crosshair.valid && g_guiCam.transformSetPosition && IsAimCompensatedGuiElement(goName)) {
-        if (!IsInGameplay()) return true;
-        OffsetGuiElementToAimPoint(mo);
+    if (IsInGameplay()) {
+        DumpGuiStructure(mo, goName);
+    }
+
+    if (g_crosshair.valid && g_guiCam.transformSetPosition && IsInGameplay()) {
+        if (IsWorldMarkerGuiElement(goName)) {
+            OffsetWorldMarker(mo, goName);
+        } else if (IsReticleGuiElement(goName)) {
+            OffsetGuiElementToAimPoint(mo, goName);
+        }
     }
 
     return true;
@@ -481,6 +615,9 @@ void OnPreBeginRendering() {
 
     ApplyHeadTracking(worldMat);
     g_trackingAppliedThisFrame = true;
+
+    g_headCameraMatrix.matrix = *worldMat;
+    g_headCameraMatrix.valid = true;
 
     UpdateCrosshairProjection(g_cleanCameraMatrix.matrix, *worldMat);
 }
