@@ -335,6 +335,12 @@ static void OffsetGuiElementToAimPoint(reframework::API::ManagedObject* mo, cons
     float fx = 0.f, fy = 0.f;
     if (!GetMarkerProjectionFocalLengths(fx, fy)) return;
 
+    // Square pixels: horizontal pixel focal length equals the vertical one. RE3's
+    // projection matrix reports fx as half of fy, which would place the reticle at
+    // only half the head-yaw offset while bullets fire along the true clean aim -
+    // shots would miss the reticle centre. fy is the verified value; use it for X.
+    fx = fy;
+
     float deltaX = -g_crosshair.tanRight * fx;
     float deltaY =  g_crosshair.tanUp * fy;
 
@@ -441,6 +447,12 @@ static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* n
     float tcr = -(gx - kHalfReferenceCanvasWidth)  / fx;
     float tcu =  (gy - kHalfReferenceCanvasHeight) / fy;
 
+    // Rotation-only reprojection. Position (lean) parallax is intentionally NOT
+    // added here: OnPostBeginRendering keeps the head-tracked camera position, so
+    // the game already projects the marker anchor from the leaned position and the
+    // anchor shifts with lean on its own (requiem doctrine - adding a translation
+    // term would double-compensate). The diagnostic below logs the live lean and
+    // the anchor so we can confirm whether the anchor actually moves with lean.
     float wx = clean.m[2][0] + tcr * clean.m[0][0] + tcu * clean.m[1][0];
     float wy = clean.m[2][1] + tcr * clean.m[0][1] + tcu * clean.m[1][1];
     float wz = clean.m[2][2] + tcr * clean.m[0][2] + tcu * clean.m[1][2];
@@ -461,8 +473,12 @@ static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* n
         s_lastLogEpoch = g_frameEpoch;
         float yaw = 0.f, pitch = 0.f, roll = 0.f;
         Mod::Instance().GetProcessedRotation(yaw, pitch, roll);
-        Logger::Instance().Info("World marker yaw=%.1f pitch=%.1f anchor=(%.0f,%.0f) delta=(%.1f,%.1f)",
-            yaw, pitch, gx, gy, delta[0], delta[1]);
+        float px = 0.f, py = 0.f, pz = 0.f;
+        Mod::Instance().GetPositionOffset(px, py, pz);
+        Logger::Instance().Info("World marker yaw=%.1f pitch=%.1f posOff=(%.3f,%.3f,%.3f) lean=(%.3f,%.3f,%.3f) anchor=(%.0f,%.0f) delta=(%.1f,%.1f)",
+            yaw, pitch, px, py, pz,
+            head.m[3][0] - clean.m[3][0], head.m[3][1] - clean.m[3][1], head.m[3][2] - clean.m[3][2],
+            gx, gy, delta[0], delta[1]);
     }
 }
 
