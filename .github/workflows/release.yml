@@ -83,10 +83,18 @@ jobs:
       - name: Generate release notes
         shell: pwsh
         run: |
-          powershell -ExecutionPolicy Bypass -File cameraunlock-core/scripts/generate-release-notes.ps1 `
+          # Build the array in-step: `powershell -File` binds every argument as
+          # a literal, so the paths arrive as one blob that matches no files.
+          $artifactPaths = @(
+            'src',
+            'cameraunlock-core',
+            'scripts/install.cmd',
+            'scripts/uninstall.cmd'
+          )
+          & cameraunlock-core/scripts/generate-release-notes.ps1 `
             -Version $env:VERSION `
             -ProjectName "RE3 Head Tracking" `
-            -ArtifactPaths @("src/", "cameraunlock-core/", "scripts/install.cmd", "scripts/uninstall.cmd")
+            -ArtifactPaths $artifactPaths
           if ($LASTEXITCODE -ne 0) {
             Write-Host "::error::Release notes generation failed"
             exit 1
