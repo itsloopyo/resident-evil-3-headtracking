@@ -90,8 +90,10 @@ if ($Version -eq 'nightly') {
     exit $LASTEXITCODE
 }
 
-if ($Version -notmatch '^\d+\.\d+\.\d+$') {
-    Write-Host "Error: Invalid version format '$Version'. Use semantic versioning X.Y.Z." -ForegroundColor Red
+try {
+    $Version = Resolve-ReleaseVersion -Argument $Version -CurrentVersion $currentVersion
+} catch {
+    Write-Host "Error: $($_.Exception.Message)" -ForegroundColor Red
     exit 1
 }
 
