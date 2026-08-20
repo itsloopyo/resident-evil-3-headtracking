@@ -9,6 +9,7 @@
 #include <cameraunlock/math/smoothing_utils.h>
 #include <cameraunlock/reframework/camera_chain.h>
 #include <cameraunlock/reframework/camera_controller_hook.h>
+#include <cameraunlock/time/qpc_clock.h>
 #include <cameraunlock/reframework/managed_utils.h>
 #include <cameraunlock/rendering/gui_marker_compensation.h>
 #include <unordered_set>
@@ -35,7 +36,7 @@ struct CrosshairProjection {
 
 static CrosshairProjection g_crosshair;
 
-// Saved game rotation — what the game INTENDED before we modified it
+// Saved game rotation - what the game INTENDED before we modified it
 static struct {
     Matrix4x4f gameMatrix;     // The game's clean matrix (saved after game updates)
     bool hasGameMatrix = false;
@@ -59,7 +60,7 @@ static bool g_trackingAppliedThisFrame = false;
 
 static ref::CameraTransformResolver g_cameraResolver;
 
-// via.Camera.get_ProjectionMatrix — not part of the standard chain, resolved
+// via.Camera.get_ProjectionMatrix - not part of the standard chain, resolved
 // separately for exact focal-length reads.
 static reframework::API::Method* g_getProjectionMatrix = nullptr;
 
@@ -190,6 +191,9 @@ static ref::CameraControllerHooker g_controllerHooker{
     CameraUpdatePreHook,
     CameraUpdatePostHook};
 
+// Minimum gap between repeats of the camera-controller-not-found warning.
+constexpr uint64_t kHookWarnIntervalUs = 30ull * 1000000ull;
+
 // Retry camera-controller discovery each gameplay frame until it succeeds.
 // The candidate fast path normally hooks at plugin init (see
 // InitCachedFunctions); this adds the parent-chain walk, which needs a live
@@ -198,8 +202,13 @@ static void EnsureCameraControllerHooked() {
     if (g_controllerHooker.IsHooked()) return;
     if (g_controllerHooker.TryHook(GetCameraTransformCached())) return;
 
+    // Wall-clock, not frame-count: a frame-gated warning writes hundreds of
+    // lines an hour on a high-refresh display and buries the startup sequence.
     int attempts = g_controllerHooker.AttemptCount();
-    if (attempts == 1 || (attempts % 300) == 0) {
+    uint64_t now = cameraunlock::time::QpcNowMicros();
+    static uint64_t s_lastHookWarnUs = 0;
+    if (attempts == 1 || (now - s_lastHookWarnUs) >= kHookWarnIntervalUs) {
+        s_lastHookWarnUs = now;
         Logger::Instance().Warning(
             "Camera controller hook not yet found (attempt %d) - head tracking "
             "still active via the BeginRendering restore path", attempts);
@@ -218,12 +227,12 @@ static bool GetFocalLengthsFromProjectionMatrix(float& fx, float& fy) {
     void* cam = g_cachedCamera ? g_cachedCamera : g_cameraResolver.ResolveCamera();
     if (!cam) return false;
 
-    // get_ProjectionMatrix is a property getter — no arguments, returns Matrix4x4
+    // get_ProjectionMatrix is a property getter - no arguments, returns Matrix4x4
     auto ret = g_getProjectionMatrix->invoke(
         reinterpret_cast<reframework::API::ManagedObject*>(cam), ref::EmptyArgs());
     if (ret.exception_thrown) return false;
 
-    // Matrix4x4 (64 bytes) returned in ret.bytes — row-major [row][col]
+    // Matrix4x4 (64 bytes) returned in ret.bytes - row-major [row][col]
     auto* retMat = reinterpret_cast<const float*>(ret.bytes.data());
     float p00 = retMat[0];   // m[0][0]
     float p11 = retMat[5];   // m[1][1]
@@ -251,7 +260,7 @@ static bool GetMarkerProjectionFocalLengths(float& fx, float& fy) {
     g_focalCache.epoch = g_frameEpoch;
     g_focalCache.ok = false;
 
-    // Prefer projection matrix — exact, no FOV convention guessing
+    // Prefer projection matrix - exact, no FOV convention guessing
     if (GetFocalLengthsFromProjectionMatrix(fx, fy)) {
         g_focalCache.ok = true;
         g_focalCache.fx = fx;
@@ -468,9 +477,13 @@ static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* n
     float delta[3] = { newCanvasX - gx, newCanvasY - gy, 0.f };
     ref::InvokeMethodWithArg(g_guiCam.transformSetPosition, view, &delta[0]);
 
+    // Capped: the 30-frame interval alone streams for the whole session,
+    // which buries the startup chain a user is asked to send.
     static uint64_t s_lastLogEpoch = 0;
-    if (g_frameEpoch != s_lastLogEpoch && (g_frameEpoch % 30) == 0) {
+    static int s_worldMarkerLogsLeft = 5;
+    if (s_worldMarkerLogsLeft > 0 && g_frameEpoch != s_lastLogEpoch && (g_frameEpoch % 30) == 0) {
         s_lastLogEpoch = g_frameEpoch;
+        s_worldMarkerLogsLeft--;
         float yaw = 0.f, pitch = 0.f, roll = 0.f;
         Mod::Instance().GetProcessedRotation(yaw, pitch, roll);
         float px = 0.f, py = 0.f, pz = 0.f;
@@ -587,7 +600,8 @@ static void UpdateCrosshairProjection(const Matrix4x4f& clean, const Matrix4x4f&
     // Smooth screen-space projection values to eliminate jitter from
     // perspective-division noise and per-frame FOV fluctuations.
     float dt = Mod::Instance().GetLastDeltaTime();
-    constexpr float kCrosshairSmoothing = static_cast<float>(cameraunlock::math::kBaselineSmoothing);
+    // Internal projection-smoothing constant, deliberately independent of the user's tracking smoothing.
+    constexpr float kCrosshairSmoothing = 0.15f;
 
     static cameraunlock::math::SmoothedFloat s_tanRight;
     static cameraunlock::math::SmoothedFloat s_tanUp;
@@ -601,8 +615,13 @@ static void UpdateCrosshairProjection(const Matrix4x4f& clean, const Matrix4x4f&
 
 // --- Pre-BeginRendering: apply head tracking for rendering ---
 void OnPreBeginRendering() {
-    // Drain hotkey requests on the render thread so recenter / mode-cycle
-    // never mutate session state concurrently with the pipeline tick below.
+    // Before every gate below: the first-packet latch has to survive
+    // AutoEnable=false, a menu, and a failed function cache, because those are
+    // exactly the states a "no head tracking" report is trying to tell apart.
+    Mod::Instance().LogFirstTrackerPose();
+
+    // Drain hotkey requests on the render thread so the mode cycle never
+    // mutates session state concurrently with the pipeline tick below.
     Mod::Instance().ProcessDeferredActions();
 
     if (!InitCachedFunctions()) return;
@@ -610,9 +629,6 @@ void OnPreBeginRendering() {
     if (!IsInGameplay()) return;
     EnsureCameraControllerHooked();
     g_frameEpoch++;
-    if (ShouldRecenter()) {
-        Mod::Instance().Recenter();
-    }
 
     // Advance interpolation + smoothing once per render frame. Every
     // downstream consumer (ApplyHeadTracking, crosshair projection, GUI

@@ -27,7 +27,7 @@ set "MOD_VERSION=0.0.0"
 set "STATE_FILE=.headtracking-state.json"
 set "FRAMEWORK_TYPE=REFramework"
 set "REFRAMEWORK_VENDOR_ZIP_NAME=RE3.zip"
-set "MOD_CONTROLS=Controls (nav-cluster keys, or Ctrl+Shift chords for keyboards without a nav cluster):&echo   Home / Ctrl+Shift+T - Recenter&echo   End  / Ctrl+Shift+Y - Toggle tracking&echo   PgUp / Ctrl+Shift+G - Cycle tracking mode&echo   PgDn / Ctrl+Shift+H - Toggle yaw mode&echo   Ins  / Ctrl+Shift+U - Toggle reticle"
+set "MOD_CONTROLS=Controls (nav-cluster keys, or Ctrl+Shift chords for keyboards without a nav cluster):&echo   End  / Ctrl+Shift+Y - Toggle tracking&echo   PgUp / Ctrl+Shift+G - Cycle tracking mode&echo   PgDn / Ctrl+Shift+H - Toggle yaw mode&echo   Ins  / Ctrl+Shift+U - Toggle reticle"
 :: REFRAMEWORK_VENDOR_ZIP_NAME is per-game (RE:Requiem is RE9.zip, RE2 is
 :: RE2.zip, etc). update-deps.ps1 must be configured with the same name so
 :: the refresh writes to the right vendor file.
