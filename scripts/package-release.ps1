@@ -60,6 +60,33 @@ if (-not (Test-Path $vendorZip)) {
     throw "Vendored REFramework not found at: $vendorZip. Run 'pixi run update-deps' before packaging."
 }
 
+# Both ZIPs redistribute RE3HeadTracking.dll, which has REFramework's plugin SDK
+# headers and cameraunlock-core compiled into it. MIT requires each copyright
+# notice to accompany the binary, so both licence texts ship as discrete files a
+# user can find without reading THIRD-PARTY-NOTICES.md end to end. Sourced from
+# the authoritative on-disk copies, and inlined here rather than taken from a
+# core helper: a helper only reaches this mod once the submodule pointer moves.
+$licenseSources = @{
+    'reframework-LICENSE.txt'        = (Join-Path $projectDir "extern\reframework\LICENSE")
+    'cameraunlock-core-LICENSE.txt'  = (Join-Path $projectDir "cameraunlock-core\LICENSE")
+}
+
+function Copy-CompiledInLicenses {
+    param([Parameter(Mandatory)][string]$StagingDir)
+
+    $dest = Join-Path $StagingDir "licenses"
+    New-Item -ItemType Directory -Path $dest -Force | Out-Null
+
+    foreach ($name in $licenseSources.Keys | Sort-Object) {
+        $src = $licenseSources[$name]
+        if (-not (Test-Path $src)) {
+            throw "Licence text not found: $src. Its code is compiled into RE3HeadTracking.dll, so this ZIP cannot ship without the notice."
+        }
+        Copy-Item $src -Destination (Join-Path $dest $name) -Force
+        Write-Host "  licenses/$name" -ForegroundColor Green
+    }
+}
+
 # --- Installer (GitHub Releases) ZIP ---
 Write-Host "--- Installer ZIP (GitHub Releases) ---" -ForegroundColor Yellow
 Write-Host ""
@@ -92,24 +119,28 @@ $ghVendorDir = Join-Path $ghStagingDir "vendor\reframework"
 New-Item -ItemType Directory -Path $ghVendorDir -Force | Out-Null
 Copy-Item $vendorZip -Destination $ghVendorDir -Force
 Write-Host "  vendor/reframework/RE3.zip" -ForegroundColor Green
+# The loader binary is redistributed here, so its MIT notice is not optional.
+# A guarded copy would turn a licence violation into a green build: throw.
 foreach ($vf in @("LICENSE", "README.md")) {
     $src = Join-Path $vendorDir $vf
-    if (Test-Path $src) {
-        Copy-Item $src -Destination $ghVendorDir -Force
-        Write-Host "  vendor/reframework/$vf" -ForegroundColor Green
-    } else {
-        Write-Warning "vendor/reframework/$vf missing; release will ship without it"
+    if (-not (Test-Path $src)) {
+        throw "vendor/reframework/$vf not found. The vendored loader is redistributed in this ZIP and its licence and provenance must ship beside it. Run 'pixi run update-deps'."
     }
+    Copy-Item $src -Destination $ghVendorDir -Force
+    Write-Host "  vendor/reframework/$vf" -ForegroundColor Green
 }
 
 $docFiles = @("README.md", "LICENSE", "CHANGELOG.md", "THIRD-PARTY-NOTICES.md")
 foreach ($doc in $docFiles) {
     $docPath = Join-Path $projectDir $doc
-    if (Test-Path $docPath) {
-        Copy-Item $docPath -Destination $ghStagingDir -Force
-        Write-Host "  $doc" -ForegroundColor Green
+    if (-not (Test-Path $docPath)) {
+        throw "Required notice file not found: $doc. Every published ZIP is a binary distribution and must carry it."
     }
+    Copy-Item $docPath -Destination $ghStagingDir -Force
+    Write-Host "  $doc" -ForegroundColor Green
 }
+
+Copy-CompiledInLicenses -StagingDir $ghStagingDir
 
 # launcher-manifest.json: the contract Lopari reads at the ZIP root. Stamp the
 # release version and regenerate the write-once config seed from the live
@@ -168,6 +199,19 @@ if (Test-Path $nexusZipPath) { Remove-Item $nexusZipPath -Force }
 
 Write-Host ""
 Write-Host "Creating Nexus ZIP..." -ForegroundColor Cyan
+
+# The Nexus ZIP is a binary distribution too: the licences of everything
+# compiled into or bundled with the payload require their notices to travel
+# with it, so LICENSE and THIRD-PARTY-NOTICES.md ship at its root.
+foreach ($noticeDoc in @('LICENSE', 'THIRD-PARTY-NOTICES.md', 'README.md')) {
+    $noticeSrc = Join-Path $projectDir $noticeDoc
+    if (-not (Test-Path $noticeSrc)) {
+        throw "Required notice file not found: $noticeDoc. Every published ZIP is a binary distribution and must carry it."
+    }
+    Copy-Item $noticeSrc -Destination $nexusStagingDir -Force
+    Write-Host "  $noticeDoc" -ForegroundColor Green
+}
+Copy-CompiledInLicenses -StagingDir $nexusStagingDir
 
 Push-Location $nexusStagingDir
 try {
