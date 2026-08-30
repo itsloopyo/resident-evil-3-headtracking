@@ -84,10 +84,21 @@ static void DumpGuiStructure(reframework::API::ManagedObject* mo, const char* na
 // and child[1] are touched - never the Text/Circle children whose
 // get_GlobalPosition returns garbage and crashes the game.
 //
-// Rotation-only reprojection, with no lean term. Parallax is lean/depth, a
-// marker sits at its own depth, and this shifts the marker's whole View by one
-// delta, so no single value is right for more than one of them. What that
-// leaves uncorrected fades with distance, and markers are mostly distant.
+// Rotation-only reprojection, with no lean term, and that is a known gap rather
+// than a design choice.
+//
+// The post-render callback restores the clean camera in full, position row
+// included, so the engine projects the anchor from the un-leaned eye while the
+// frame was drawn from the leaned one. The rotation half of that difference is
+// what this corrects, exactly, because the anchor's own ray is read rather than
+// assumed. The translation half is lean/depth and needs the anchor's depth,
+// which neither of RE3's two marker elements can supply: get_GlobalPosition is a
+// canvas position, GUI_FloatIcon and GUI_Purpose have no near/far pair bounding
+// their range, and correcting with an assumed depth d_a leaves
+// f*lean*(1/d_true - 1/d_a), which only beats leaving it alone while
+// d_a > d_true/2. The diagnostic below logs the live lean and the third
+// component of the anchor read, which is where a real depth would have to come
+// from.
 static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* name) {
     (void)name;
     const auto& projection = ref::GetFrameProjection();
@@ -149,8 +160,19 @@ static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* n
         ref::PluginMod::Instance().GetProcessedRotation(yaw, pitch, roll);
         float px = 0.f, py = 0.f, pz = 0.f;
         ref::PluginMod::Instance().GetPositionOffset(px, py, pz);
-        ref::LogInfo("World marker yaw=%.1f pitch=%.1f posOff=(%.3f,%.3f,%.3f) anchor=(%.0f,%.0f) delta=(%.1f,%.1f)",
-            yaw, pitch, px, py, pz, gx, gy, deltaX, deltaY);
+        // Third component of the anchor read. get_GlobalPosition returns a
+        // vec3 and only x/y are used; if the engine writes the anchor's view
+        // depth into z, that is the missing input for the lean term above, and
+        // this line is what would say so.
+        float anchorZ = 0.f;
+        reframework::InvokeRet gpRet;
+        if (ref::TryInvoke(gui.getGlobalPosition, main, gpRet)) {
+            anchorZ = *reinterpret_cast<const float*>(&gpRet.bytes[8]);
+        }
+        const float* lean = projection.cleanLocalPositionDelta;
+        ref::LogInfo("World marker yaw=%.1f pitch=%.1f posOff=(%.3f,%.3f,%.3f) "
+            "lean=(%.3f,%.3f,%.3f) anchor=(%.0f,%.0f,%.3f) delta=(%.1f,%.1f)",
+            yaw, pitch, px, py, pz, lean[0], lean[1], lean[2], gx, gy, anchorZ, deltaX, deltaY);
     }
 }
 

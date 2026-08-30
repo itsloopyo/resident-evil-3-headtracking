@@ -105,18 +105,13 @@ view sits off to one side, centre it in the tracker.
 
 Two equivalent binding sets - use whichever your keyboard has:
 
-| Action              | Nav-cluster | Chord           |
-|---------------------|-------------|-----------------|
-| Toggle tracking     | `End`       | `Ctrl+Shift+Y`  |
-| Cycle tracking mode | `Page Up`   | `Ctrl+Shift+G`  |
-| Toggle yaw mode     | `Page Down` | `Ctrl+Shift+H`  |
+| Action                     | Nav-cluster | Chord          |
+|----------------------------|-------------|----------------|
+| Toggle tracking            | `End`       | `Ctrl+Shift+Y` |
+| Toggle positional tracking | `Page Up`   | `Ctrl+Shift+G` |
+| Toggle yaw mode            | `Page Down` | `Ctrl+Shift+H` |
 
-`Page Up` / `Ctrl+Shift+G` cycles tracking mode:
-
-1. Normal head-tracked gameplay
-2. Positional tracking disabled, rotational tracking enabled
-3. Rotational tracking disabled, positional tracking enabled
-4. Back to normal
+`Page Up` / `Ctrl+Shift+G` turns positional (6DOF) tracking off and on. Head rotation keeps running either way.
 
 `Toggle yaw mode` switches between world-space (horizon-locked) and camera-local yaw.
 
@@ -164,7 +159,7 @@ Enabled=true
 [Hotkeys]
 ; Virtual key codes (hex)
 ToggleKey=0x23                  ; End - Enable/disable
-PositionToggleKey=0x21          ; Page Up - Cycle tracking mode
+PositionToggleKey=0x21          ; Page Up - Toggle position
 YawModeKey=0x22                 ; Page Down - Toggle world/local yaw
 
 [General]

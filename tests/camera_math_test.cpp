@@ -8,6 +8,7 @@
 // Run:    build/camera_math_test
 
 #include <cassert>
+#include <crtdbg.h>
 #include <cstdio>
 #include <cmath>
 
@@ -284,10 +285,19 @@ static void TestPositionOffsetMatchesInline() {
             Matrix4x4f viaInline = viaCore;
 
             ApplyViewSpacePositionOffset(viaCore, axes, o[0], o[1], o[2]);
-            OriginalPositionOffset(viaInline, axes, o[0], o[1], o[2]);
+            // The inline block negated x only. Core negates z as well, at the
+            // engine boundary, because negative z is the forward lean everywhere
+            // inside the pipeline while RE Engine's row 2 is camera forward -
+            // without the flip a forward lean drove the camera backwards, on the
+            // 0.10m backward budget instead of the 0.40m forward one. That is a
+            // deliberate correction to the original rather than a refactor
+            // artefact, so the original is handed the opposite z here and the
+            // two must still land byte-identical.
+            OriginalPositionOffset(viaInline, axes, o[0], o[1], -o[2]);
 
             AssertMatricesEqual(viaCore, viaInline,
-                "core ApplyViewSpacePositionOffset must byte-match the original inline block");
+                "core ApplyViewSpacePositionOffset must byte-match the original inline "
+                "block, up to the deliberate z negation");
             cases++;
         }
     }
@@ -317,6 +327,13 @@ static void TestAimProjectionMatchesInline() {
 }
 
 int main() {
+#ifdef _MSC_VER
+    // A failing assert in a Debug build otherwise opens a modal report box,
+    // which blocks ctest on a CI runner rather than failing it. Reported to
+    // stderr instead, so the process aborts with the message.
+    _CrtSetReportMode(_CRT_ASSERT, _CRTDBG_MODE_FILE);
+    _CrtSetReportFile(_CRT_ASSERT, _CRTDBG_FILE_STDERR);
+#endif
     printf("Running camera math equivalence tests (core re_math.h vs original inline)...\n");
     TestColumnMultiplyMatchesInline();
     TestTranslationRowUntouched();

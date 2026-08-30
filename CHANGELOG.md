@@ -12,6 +12,13 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
 - Corrected the log path in the docs. It is `<game>/re2_framework_log.txt`, not `reframework/reframework_log.txt`; REFramework uses that generic name for every RE Engine title.
 
 ### Changed
+- `Page Up` / `Ctrl+Shift+G` turns positional tracking off and on again instead
+  of cycling three modes. The third mode disabled head rotation, and it sat
+  directly after the mode a `[Position] Enabled=false` config starts in, so one
+  press of a key labelled "toggle position" switched head rotation off.
+- The world-marker trace carries the head's lean again, and now also the third
+  component of the marker's anchor read, which is where a per-marker depth would
+  have to come from.
 - The mod keeps no centre of its own. Every tracker app centres itself, so a
   centre in the mod was a second one in series with the tracker's, and the two
   drifted apart because each side moved at moments the other could not see.
@@ -28,7 +35,7 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
 - 6DOF positional tracking with configurable sensitivity and limits
 - Aim decoupling: head moves camera, mouse controls aim independently
 - Game state detection: tracking pauses in menus, loading screens, cutscenes, and pause
-- Configurable hotkeys: toggle (End), position toggle (PgUp), reticle toggle (Insert)
+- Configurable hotkeys: toggle (End), position toggle (PgUp), yaw mode (PgDn)
 - INI configuration file with sensitivity, position limits, smoothing, and hotkey settings
 - Automated installer with bundled REFramework
 - Frame-rate independent smoothing and interpolation pipeline
