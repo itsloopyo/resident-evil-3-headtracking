@@ -3,10 +3,8 @@
 #include "logger.h"
 
 #include <cameraunlock/config/ini_reader.h>
-
-#include <cstring>
-#include <cstdlib>
-#include <algorithm>
+#include <cameraunlock/math/finite_utils.h>
+#include <cameraunlock/protocol/port_utils.h>
 
 namespace RE3HT {
 
@@ -22,7 +20,6 @@ void Config::SetDefaults() {
 
     toggleKey = DEFAULT_TOGGLE_KEY;
     positionToggleKey = DEFAULT_POSITION_TOGGLE_KEY;
-    reticleToggleKey = DEFAULT_RETICLE_TOGGLE_KEY;
     yawModeKey = DEFAULT_YAW_MODE_KEY;
 
     positionSensitivityX = 2.0f;
@@ -37,29 +34,32 @@ void Config::SetDefaults() {
     positionInvertZ = false;
     positionEnabled = true;
 
-    reticleEnabled = true;
     autoEnable = true;
     worldSpaceYaw = true;
 }
 
 void Config::Validate() {
-    yawMultiplier = std::clamp(yawMultiplier, 0.1f, 5.0f);
-    pitchMultiplier = std::clamp(pitchMultiplier, 0.1f, 5.0f);
-    rollMultiplier = std::clamp(rollMultiplier, 0.0f, 2.0f);
+    using cameraunlock::math::SanitizeFinite;
+    const Config defaults{};
 
-    // Validation only: reject nonsense outside [0,1]. There is no minimum
-    // floor - 0.0 means the user asked for zero smoothing and gets it.
-    localSmoothing = std::clamp(localSmoothing, 0.0f, 1.0f);
-    remoteSmoothing = std::clamp(remoteSmoothing, 0.0f, 1.0f);
+    yawMultiplier = SanitizeFinite(yawMultiplier, defaults.yawMultiplier, 0.1f, 5.0f);
+    pitchMultiplier = SanitizeFinite(pitchMultiplier, defaults.pitchMultiplier, 0.1f, 5.0f);
+    rollMultiplier = SanitizeFinite(rollMultiplier, defaults.rollMultiplier, 0.0f, 2.0f);
 
-    positionSensitivityX = std::clamp(positionSensitivityX, 0.1f, 10.0f);
-    positionSensitivityY = std::clamp(positionSensitivityY, 0.1f, 10.0f);
-    positionSensitivityZ = std::clamp(positionSensitivityZ, 0.1f, 10.0f);
+    // Validation only: NaN/Inf falls back to the default, finite values clamp to
+    // [0,1]. There is no minimum floor - 0.0 means the user asked for zero
+    // smoothing and gets it.
+    localSmoothing = SanitizeFinite(localSmoothing, defaults.localSmoothing, 0.0f, 1.0f);
+    remoteSmoothing = SanitizeFinite(remoteSmoothing, defaults.remoteSmoothing, 0.0f, 1.0f);
 
-    positionLimitX = std::clamp(positionLimitX, 0.01f, 2.0f);
-    positionLimitY = std::clamp(positionLimitY, 0.01f, 2.0f);
-    positionLimitZ = std::clamp(positionLimitZ, 0.01f, 2.0f);
-    positionLimitZBack = std::clamp(positionLimitZBack, 0.01f, 2.0f);
+    positionSensitivityX = SanitizeFinite(positionSensitivityX, defaults.positionSensitivityX, 0.1f, 10.0f);
+    positionSensitivityY = SanitizeFinite(positionSensitivityY, defaults.positionSensitivityY, 0.1f, 10.0f);
+    positionSensitivityZ = SanitizeFinite(positionSensitivityZ, defaults.positionSensitivityZ, 0.1f, 10.0f);
+
+    positionLimitX = SanitizeFinite(positionLimitX, defaults.positionLimitX, 0.01f, 2.0f);
+    positionLimitY = SanitizeFinite(positionLimitY, defaults.positionLimitY, 0.01f, 2.0f);
+    positionLimitZ = SanitizeFinite(positionLimitZ, defaults.positionLimitZ, 0.01f, 2.0f);
+    positionLimitZBack = SanitizeFinite(positionLimitZBack, defaults.positionLimitZBack, 0.01f, 2.0f);
 }
 
 // Warned once per process rather than once per load: config is reloadable, and
@@ -94,16 +94,13 @@ bool Config::Load(const char* path) {
         return false;
     }
 
-    // Validate the raw int before narrowing to uint16_t. A value > 65535 would
-    // otherwise wrap silently (e.g. 70000 -> 4464) and a negative value would
-    // wrap to a high port, binding somewhere the user never asked for.
-    int udpPortRaw = DEFAULT_UDP_PORT;
-    if (!reader.ReadIntInRange("Network", "UDPPort", udpPortRaw, 1024, 65535, DEFAULT_UDP_PORT)) {
-        Logger::Instance().Warning("UDP port %d out of valid range (1024-65535), using default %d",
-                                   udpPortRaw, DEFAULT_UDP_PORT);
-        udpPortRaw = DEFAULT_UDP_PORT;
+    int rawPort = reader.ReadInt("Network", "UDPPort", udpPort);
+    bool portValid = false;
+    udpPort = cameraunlock::NormalizeUdpPort(rawPort, DEFAULT_UDP_PORT, portValid);
+    if (!portValid) {
+        Logger::Instance().Warning("UDP port %d is out of range (1024-65535), using default %d",
+                                   rawPort, DEFAULT_UDP_PORT);
     }
-    udpPort = static_cast<uint16_t>(udpPortRaw);
 
     yawMultiplier = reader.ReadFloat("Sensitivity", "YawMultiplier", yawMultiplier);
     pitchMultiplier = reader.ReadFloat("Sensitivity", "PitchMultiplier", pitchMultiplier);
@@ -116,7 +113,6 @@ bool Config::Load(const char* path) {
 
     toggleKey = reader.ReadHex("Hotkeys", "ToggleKey", toggleKey);
     positionToggleKey = reader.ReadHex("Hotkeys", "PositionToggleKey", positionToggleKey);
-    reticleToggleKey = reader.ReadHex("Hotkeys", "ReticleToggleKey", reticleToggleKey);
     yawModeKey = reader.ReadHex("Hotkeys", "YawModeKey", yawModeKey);
 
     positionSensitivityX = reader.ReadFloat("Position", "SensitivityX", positionSensitivityX);
@@ -131,7 +127,6 @@ bool Config::Load(const char* path) {
     positionInvertZ = reader.ReadBool("Position", "InvertZ", positionInvertZ);
     positionEnabled = reader.ReadBool("Position", "Enabled", positionEnabled);
 
-    reticleEnabled = reader.ReadBool("Reticle", "Enabled", reticleEnabled);
     autoEnable = reader.ReadBool("General", "AutoEnable", autoEnable);
     worldSpaceYaw = reader.ReadBool("General", "WorldSpaceYaw", worldSpaceYaw);
 
@@ -187,11 +182,7 @@ bool Config::Save(const char* path) const {
     file << "; Virtual key codes (hex)\n";
     file << "ToggleKey=0x" << std::hex << toggleKey << "    ; End\n";
     file << "PositionToggleKey=0x" << positionToggleKey << " ; Page Up\n";
-    file << "ReticleToggleKey=0x" << reticleToggleKey << "  ; Insert\n";
     file << "YawModeKey=0x" << yawModeKey << "      ; Page Down - toggle world/local yaw\n" << std::dec << "\n";
-
-    file << "[Reticle]\n";
-    file << "Enabled=" << (reticleEnabled ? "true" : "false") << "\n\n";
 
     file << "[General]\n";
     file << "AutoEnable=" << (autoEnable ? "true" : "false") << "\n";

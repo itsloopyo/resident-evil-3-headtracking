@@ -87,7 +87,6 @@ Two equivalent binding sets - use whichever your keyboard has:
 | Toggle tracking     | `End`       | `Ctrl+Shift+Y`  |
 | Cycle tracking mode | `Page Up`   | `Ctrl+Shift+G`  |
 | Toggle yaw mode     | `Page Down` | `Ctrl+Shift+H`  |
-| Toggle reticle      | `Insert`    | `Ctrl+Shift+U`  |
 
 `Page Up` / `Ctrl+Shift+G` cycles tracking mode:
 
@@ -143,12 +142,7 @@ Enabled=true
 ; Virtual key codes (hex)
 ToggleKey=0x23                  ; End - Enable/disable
 PositionToggleKey=0x21          ; Page Up - Cycle tracking mode
-ReticleToggleKey=0x2D           ; Insert - Toggle reticle
 YawModeKey=0x22                 ; Page Down - Toggle world/local yaw
-
-[Reticle]
-; Show the head tracking reticle overlay
-Enabled=true
 
 [General]
 ; Auto-enable tracking on game start

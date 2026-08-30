@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cameraunlock/input/deferred_actions.h>
 #include <cameraunlock/protocol/udp_receiver.h>
+#include <cameraunlock/time/frame_clock.h>
 #include <cameraunlock/tracking/head_tracking_session.h>
 
 namespace RE3HT {
@@ -20,7 +21,6 @@ public:
     void Toggle();
 
     void CycleTrackingMode();
-    void ToggleReticle();
     void ToggleYawMode();
 
     // Hotkey callbacks fire on the HotkeyPoller's background thread, but
@@ -68,14 +68,13 @@ private:
     cameraunlock::HeadTrackingSession<cameraunlock::UdpReceiver> m_session{m_udpReceiver};
 
     // Read on the render thread, toggled on the hotkey thread.
-    std::atomic<bool> m_reticleEnabled{true};
     std::atomic<bool> m_worldSpaceYaw{false};
 
     cameraunlock::input::DeferredAction m_cycleModeRequested;
 
     bool m_loggedFirstPose = false;
 
-    uint64_t m_lastFrameTickTime = 0;
+    cameraunlock::time::FrameClock m_frameClock;
     float m_lastDeltaTime = DELTA_TIME_DEFAULT;
 };
 

@@ -456,12 +456,11 @@ static void OffsetWorldMarker(reframework::API::ManagedObject* mo, const char* n
     float tcr = -(gx - kHalfReferenceCanvasWidth)  / fx;
     float tcu =  (gy - kHalfReferenceCanvasHeight) / fy;
 
-    // Rotation-only reprojection. Position (lean) parallax is intentionally NOT
-    // added here: OnPostBeginRendering keeps the head-tracked camera position, so
-    // the game already projects the marker anchor from the leaned position and the
-    // anchor shifts with lean on its own (requiem doctrine - adding a translation
-    // term would double-compensate). The diagnostic below logs the live lean and
-    // the anchor so we can confirm whether the anchor actually moves with lean.
+    // Rotation-only reprojection, with no lean term. Parallax is lean/depth, a
+    // marker sits at its own depth, and this shifts the marker's whole View by
+    // one delta, so no single value is right for more than one of them. What
+    // that leaves uncorrected fades with distance, and markers are mostly
+    // distant. The diagnostic below logs the live lean alongside the anchor.
     float wx = clean.m[2][0] + tcr * clean.m[0][0] + tcu * clean.m[1][0];
     float wy = clean.m[2][1] + tcr * clean.m[0][1] + tcu * clean.m[1][1];
     float wz = clean.m[2][2] + tcr * clean.m[0][2] + tcu * clean.m[1][2];
@@ -674,18 +673,20 @@ void OnPostBeginRendering() {
     Matrix4x4f* worldMat = reinterpret_cast<Matrix4x4f*>(
         reinterpret_cast<uint8_t*>(transform) + ref::kTransformWorldMatrixOffset);
     __try {
-        // Save head-tracked position before restoring
-        float hx = worldMat->m[3][0];
-        float hy = worldMat->m[3][1];
-        float hz = worldMat->m[3][2];
-
-        // Restore clean rotation (3x3) + clean row 3 w component
+        // Restore the clean camera in full - POSITION as well as rotation.
+        //
+        // Keeping the head-tracked translation row left the game aiming off a
+        // leaned eye: the shot converges on the leaned eye's axis while the
+        // round leaves the un-leaned body, so reticle and impact agree at
+        // exactly one range and splay apart either side of it, swapping sides
+        // as the player walks through it. Head tracking must not move where
+        // bullets go.
+        //
+        // The lean still renders. Rotation is written and taken back at the
+        // same two hooks and rotation is what the player sees, so the camera
+        // matrix the renderer consumes is snapshotted between them; the
+        // translation row is in that same matrix.
         *worldMat = g_cleanCameraMatrix.matrix;
-
-        // Re-apply head-tracked position so aim origin matches lean
-        worldMat->m[3][0] = hx;
-        worldMat->m[3][1] = hy;
-        worldMat->m[3][2] = hz;
     } __except(EXCEPTION_EXECUTE_HANDLER) {}
 
     g_cachedTransform = nullptr;
