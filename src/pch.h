@@ -21,5 +21,6 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <iterator>
 
 #include "core/constants.h"

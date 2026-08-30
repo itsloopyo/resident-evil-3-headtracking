@@ -20,10 +20,7 @@ add_subdirectory(cameraunlock-core/cpp ${CMAKE_BINARY_DIR}/cameraunlock-core)
 add_library(RE3HeadTracking SHARED
     src/pch.cpp
     src/plugin_main.cpp
-    src/core/mod.cpp
-    src/core/config.cpp
-    src/core/logger.cpp
-    src/camera/camera_hook.cpp
+    src/camera/gui_compensation.cpp
     src/camera/game_state_detector.cpp
 )
 
@@ -41,3 +38,21 @@ target_include_directories(RE3HeadTracking PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/extern
 )
+
+# Host-side unit tests. Off by default so normal/CI plugin builds are
+# unaffected; enable with -DRE3HT_BUILD_TESTS=ON. Both suites are standalone -
+# they pin core's camera math and the GUI dedup/memo behaviour against the
+# pre-refactor implementations copied into the test itself - so neither links
+# any plugin source.
+option(RE3HT_BUILD_TESTS "Build RE3 head tracking host unit tests" OFF)
+if(RE3HT_BUILD_TESTS)
+    enable_testing()
+
+    add_executable(re3ht_camera_math_test tests/camera_math_test.cpp)
+    target_link_libraries(re3ht_camera_math_test PRIVATE cameraunlock)
+    add_test(NAME re3ht_camera_math_test COMMAND re3ht_camera_math_test)
+
+    add_executable(re3ht_perf_equivalence_test tests/perf_equivalence_test.cpp)
+    target_link_libraries(re3ht_perf_equivalence_test PRIVATE cameraunlock)
+    add_test(NAME re3ht_perf_equivalence_test COMMAND re3ht_perf_equivalence_test)
+endif()

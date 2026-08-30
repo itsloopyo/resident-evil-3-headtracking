@@ -1,144 +1,103 @@
 #include "pch.h"
 #include "game_state_detector.h"
-#include "core/logger.h"
+
+#include <cameraunlock/reframework/gameplay_gate.h>
+#include <cameraunlock/reframework/log_callback.h>
+#include <cameraunlock/reframework/managed_utils.h>
 
 #include <reframework/API.hpp>
-#include <cameraunlock/reframework/managed_utils.h>
 
 namespace RE3HT {
 
 namespace ref = cameraunlock::reframework;
 
-// RE3 (offline.*) game-state signals, confirmed at runtime:
-//   PlayerManager.get_CurrentPlayer()             null => menu / loading
-//   <player>.getComponent(SurvivorCondition).get_IsEvent() => cutscene
-//   GUIMaster.get_IsOpenPause()                   true => pause / inventory
+// RE3 (offline.*) game-state signals, verified against the live TDB:
+//   PlayerManager.get_CurrentPlayer()                      null => menu / loading
+//   <player>.getComponent(SurvivorCondition).get_IsEvent() true => cutscene
+//   GUIMaster.get_IsOpenPause()                            true => pause / inventory
+//
+// Named outright rather than probed. The generic manager probing the RE7/RE8/
+// Requiem detectors use binds whichever candidate resolves first, which is the
+// right trade only where nothing has been confirmed; here these have been, and
+// swapping them for a probe would trade a verified binding for a guess.
 static constexpr const char* kPlayerManager = "offline.PlayerManager";
 static constexpr const char* kSurvivorCondition = "offline.survivor.SurvivorCondition";
 static constexpr const char* kGuiMaster = "offline.gui.GUIMaster";
 
 static struct {
-    bool inGameplay = false;
-    uint64_t lastCheckTime = 0;
-    static constexpr uint64_t CHECK_INTERVAL_MS = 100;
-
-    bool typesInitialized = false;
-
-    // Tier 1: camera existence
-    reframework::API::Method* getMainView = nullptr;
-    reframework::API::Method* getPrimaryCamera = nullptr;
-
-    // Tier 2: gameplay-vs-not signals
     reframework::API::Method* getCurrentPlayer = nullptr;
     reframework::API::Method* getComponent = nullptr;
     void* survivorConditionType = nullptr;  // System.Type for getComponent
     reframework::API::Method* getIsEvent = nullptr;
     reframework::API::Method* getIsOpenPause = nullptr;
-    bool stateMethodsAvailable = false;
+    bool available = false;
+} g_checks;
 
-    bool wasInGameplay = false;
-} g_state;
+static void Discover() {
+    auto tdb = reframework::API::get()->tdb();
 
-void RefreshGameState() {
-    uint64_t now = GetTickCount64();
-    if (now - g_state.lastCheckTime < g_state.CHECK_INTERVAL_MS) return;
-    g_state.lastCheckTime = now;
-
-    const auto& api = reframework::API::get();
-    if (!api) {
-        g_state.inGameplay = false;
-        return;
+    auto pmType = tdb->find_type(kPlayerManager);
+    if (pmType) g_checks.getCurrentPlayer = pmType->find_method("get_CurrentPlayer");
+    auto goType = tdb->find_type("via.GameObject");
+    if (goType) g_checks.getComponent = goType->find_method("getComponent");
+    auto condType = tdb->find_type(kSurvivorCondition);
+    if (condType) {
+        g_checks.getIsEvent = condType->find_method("get_IsEvent");
+        g_checks.survivorConditionType = condType->get_runtime_type();
     }
+    auto guiType = tdb->find_type(kGuiMaster);
+    if (guiType) g_checks.getIsOpenPause = guiType->find_method("get_IsOpenPause");
 
-    if (!g_state.typesInitialized) {
-        g_state.typesInitialized = true;
-        auto tdb = api->tdb();
+    g_checks.available =
+        g_checks.getCurrentPlayer && g_checks.getComponent &&
+        g_checks.survivorConditionType && g_checks.getIsEvent && g_checks.getIsOpenPause;
 
-        auto smType = tdb->find_type("via.SceneManager");
-        if (smType) g_state.getMainView = smType->find_method("get_MainView");
-        auto svType = tdb->find_type("via.SceneView");
-        if (svType) g_state.getPrimaryCamera = svType->find_method("get_PrimaryCamera");
-
-        auto pmType = tdb->find_type(kPlayerManager);
-        if (pmType) g_state.getCurrentPlayer = pmType->find_method("get_CurrentPlayer");
-        auto goType = tdb->find_type("via.GameObject");
-        if (goType) g_state.getComponent = goType->find_method("getComponent");
-        auto condType = tdb->find_type(kSurvivorCondition);
-        if (condType) {
-            g_state.getIsEvent = condType->find_method("get_IsEvent");
-            g_state.survivorConditionType = condType->get_runtime_type();
-        }
-        auto guiType = tdb->find_type(kGuiMaster);
-        if (guiType) g_state.getIsOpenPause = guiType->find_method("get_IsOpenPause");
-
-        g_state.stateMethodsAvailable =
-            g_state.getCurrentPlayer && g_state.getComponent &&
-            g_state.survivorConditionType && g_state.getIsEvent && g_state.getIsOpenPause;
-
-        Logger::Instance().Info("Game state detection %s: player=%p, getComponent=%p, condType=%p, isEvent=%p, pause=%p",
-            g_state.stateMethodsAvailable ? "ready" : "unavailable",
-            g_state.getCurrentPlayer, g_state.getComponent,
-            g_state.survivorConditionType, g_state.getIsEvent, g_state.getIsOpenPause);
-    }
-
-    bool newState = false;
-    const char* suppressReason = nullptr;
-
-    do {
-        // Tier 1: camera must exist
-        if (!g_state.getMainView || !g_state.getPrimaryCamera) break;
-
-        auto sceneManager = api->get_native_singleton("via.SceneManager");
-        if (!sceneManager) break;
-        auto mainView = g_state.getMainView->call<void*>(api->get_vm_context(), sceneManager);
-        if (!mainView) break;
-        auto camera = g_state.getPrimaryCamera->call<void*>(api->get_vm_context(), mainView);
-        if (!camera) break;
-
-        // Tier 2: suppress outside active gameplay
-        if (g_state.stateMethodsAvailable) {
-            __try {
-                auto pmgr = api->get_managed_singleton(kPlayerManager);
-                if (!pmgr) { suppressReason = "no PlayerManager"; __leave; }
-
-                auto player = ref::CallMethod(g_state.getCurrentPlayer, pmgr);
-                if (!player) { suppressReason = "no player (menu/loading)"; __leave; }
-
-                auto condition = ref::CallMethodArg(g_state.getComponent, player, g_state.survivorConditionType);
-                if (condition && ref::CallMethodBool(g_state.getIsEvent, condition)) {
-                    suppressReason = "cutscene";
-                    __leave;
-                }
-
-                auto gui = api->get_managed_singleton(kGuiMaster);
-                if (gui && ref::CallMethodBool(g_state.getIsOpenPause, gui)) {
-                    suppressReason = "paused";
-                    __leave;
-                }
-            } __except(EXCEPTION_EXECUTE_HANDLER) {
-                suppressReason = nullptr;
-            }
-
-            if (suppressReason) break;
-        }
-
-        newState = true;
-    } while (false);
-
-    g_state.inGameplay = newState;
-
-    if (g_state.inGameplay && !g_state.wasInGameplay) {
-        Logger::Instance().Info("Game state: entered gameplay");
-    } else if (!g_state.inGameplay && g_state.wasInGameplay) {
-        Logger::Instance().Info("Game state: left gameplay (%s)",
-            suppressReason ? suppressReason : "no camera");
-    }
-    g_state.wasInGameplay = g_state.inGameplay;
+    ref::LogInfo("Game state detection %s: player=%p, getComponent=%p, condType=%p, isEvent=%p, pause=%p",
+        g_checks.available ? "ready" : "unavailable",
+        g_checks.getCurrentPlayer, g_checks.getComponent,
+        g_checks.survivorConditionType, g_checks.getIsEvent, g_checks.getIsOpenPause);
 }
 
-bool IsInGameplay() {
-    RefreshGameState();
-    return g_state.inGameplay;
+// The managed calls, guarded together. A probe that faults reports no
+// suppression rather than a state: the game is running, this detector is not,
+// and dropping tracking on the detector's own failure would be the worse of the
+// two errors.
+static const char* SuppressReason(const reframework::API* api) {
+    __try {
+        auto pmgr = api->get_managed_singleton(kPlayerManager);
+        if (!pmgr) return "no PlayerManager";
+
+        auto player = ref::CallMethod(g_checks.getCurrentPlayer, pmgr);
+        if (!player) return "no player (menu/loading)";
+
+        auto condition = ref::CallMethodArg(g_checks.getComponent, player, g_checks.survivorConditionType);
+        if (condition && ref::CallMethodBool(g_checks.getIsEvent, condition)) {
+            return "cutscene";
+        }
+
+        auto gui = api->get_managed_singleton(kGuiMaster);
+        if (gui && ref::CallMethodBool(g_checks.getIsOpenPause, gui)) {
+            return "paused";
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return nullptr;
 }
+
+static bool Check(void* primaryCamera, bool diag, const char** reason) {
+    (void)primaryCamera;
+    (void)diag;
+    if (!g_checks.available) return true;
+
+    const char* suppress = SuppressReason(reframework::API::get().get());
+    if (!suppress) return true;
+    *reason = suppress;
+    return false;
+}
+
+static ref::GameplayGate g_gate{&Discover, &Check};
+
+ref::GameplayGate* GameplayGateInstance() { return &g_gate; }
+
+bool IsInGameplay() { return g_gate.IsInGameplay(); }
 
 } // namespace RE3HT
