@@ -1,5 +1,6 @@
 bin/
 build/
+build-tests/
 obj/
 dist/
 release/

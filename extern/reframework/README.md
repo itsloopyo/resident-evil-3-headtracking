@@ -2,10 +2,10 @@
 
 Upstream REFramework plugin SDK headers, taken verbatim. Unlike
 `vendor/reframework/`, which holds the loader zip the installer extracts, these
-headers are `#include`d by our own sources (`src/plugin_main.cpp`,
-`src/camera/camera_hook.cpp`, `src/camera/game_state_detector.cpp`), so upstream
-code is compiled into `RE3HeadTracking.dll` and is redistributed in every
-release ZIP that carries that DLL.
+headers are `#include`d by our own sources and by cameraunlock-core's
+`cameraunlock_reframework` target, so upstream code is compiled into
+`RE3HeadTracking.dll` and is redistributed in every release ZIP that carries
+that DLL.
 
 ## Snapshot
 
