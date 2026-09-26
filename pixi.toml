@@ -33,8 +33,7 @@ build = { cmd = "cmake --build build --config Release", depends-on = ["setup"] }
 # Build and run every host-side test (core camera math, core's GUI-name dedup,
 # the config tests and the config differential test) in build-tests/, so build/
 # stays the plugin's alone. run-tests.ps1 stops at a failed configure or build,
-# so ctest never runs a stale binary. Needs node on PATH for core's canonical
-# config lint.
+# so ctest never runs a stale binary.
 test = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1"
 build-tests = "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run-tests.ps1 -BuildOnly"
 
@@ -76,4 +75,7 @@ clean-all = { cmd = """
 release = { cmd = "powershell -ExecutionPolicy Bypass -File scripts/release.ps1" }
 
 [dependencies]
-# No pixi dependencies; uses system CMake and Visual Studio 2022.
+# The build uses the system CMake and Visual Studio. nodejs runs core's canonical config lint in
+# `test`, and core's encode-seed.mjs and validate-manifest.mjs, pinned to the build
+# cameraunlock-core's own lock resolved.
+nodejs = "==26.5.0"
