@@ -13,7 +13,7 @@ Resident Evil 3.
 |-----------|---------|---------|--------------|
 | REFramework (loader) | nightly-01394-ec6c81fd39831b328027ae00e102bc9c9c3f8aa5 | MIT | Bundled verbatim in the installer ZIP |
 | REFramework (plugin SDK headers) | source commit `ec6c81fd39831b328027ae00e102bc9c9c3f8aa5` | MIT | Compiled into `RE3HeadTracking.dll`, so it ships in **both** ZIPs |
-| cameraunlock-core | 3f3a821aa00d5b87ecde7c4af77585ff2fc71ff5 | MIT | Compiled into `RE3HeadTracking.dll`, so it ships in **both** ZIPs |
+| cameraunlock-core | b4df73a5d8076968fcbf7e4088dd49db11a2684e | MIT | Compiled into `RE3HeadTracking.dll`, so it ships in **both** ZIPs |
 | OpenTrack | n/a | ISC | Not bundled; UDP protocol interoperability only |
 
 The MIT text is identical for all three and is reproduced in full under each
@@ -88,7 +88,7 @@ SOFTWARE.
 Git submodule at `cameraunlock-core/`, compiled into `RE3HeadTracking.dll`. Our own code,
 MIT licensed, reproduced here so the notices are complete.
 
-- Pinned commit: `3f3a821aa00d5b87ecde7c4af77585ff2fc71ff5`
+- Pinned commit: `b4df73a5d8076968fcbf7e4088dd49db11a2684e`
 
 ```
 MIT License
