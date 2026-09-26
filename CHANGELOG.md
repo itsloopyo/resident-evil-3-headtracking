@@ -45,7 +45,7 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
   tracker app (OpenTrack's Center bind, the CENTER button in Headcam, SteamVR's
   reset). The `Home` key, the `Ctrl+Shift+T` chord and the
   `[Hotkeys] RecenterKey` ini entry are gone.
-- Smoothing is now two user-configurable parameters in a new `[Smoothing]` section of `HeadTracking.ini`: `LocalSmoothing` (default 0.0) for a tracker running on this machine, and `RemoteSmoothing` (default 0.15) for a tracker on a remote network device. The value is picked per connection from the packet source address and is re-evaluated while the game runs, so switching between a local OpenTrack instance and a phone on WiFi takes effect without a restart.
+- Smoothing is now two user-configurable parameters in a new `[Smoothing]` section of `CameraUnlock.ini`: `LocalSmoothing` (default 0.0) for a tracker running on this machine, and `RemoteSmoothing` (default 0.15) for a tracker on a remote network device. The value is picked per connection from the packet source address and is re-evaluated while the game runs, so switching between a local OpenTrack instance and a phone on WiFi takes effect without a restart.
 - Removed the `[Position] Smoothing` key. Both new parameters cover rotation and position, so there is no separate position smoothing setting.
 - Removed the hidden 0.15 baseline smoothing floor that silently overrode the configured value. Local users now get zero-latency tracking by default.
 
@@ -54,11 +54,11 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
 - `Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
 - When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that.
 - Decoupled head tracking via OpenTrack (UDP 4242)
-- 6DOF positional tracking with configurable sensitivity and limits
+- 6DOF positional tracking with configurable limits
 - Aim decoupling: head moves camera, mouse controls aim independently
 - Game state detection: tracking pauses in menus, loading screens, cutscenes, and pause
 - Configurable hotkeys: toggle (End), position toggle (PgUp), yaw mode (PgDn)
-- INI configuration file with sensitivity, position limits, smoothing, and hotkey settings
+- INI configuration file with position limits, smoothing, and hotkey settings
 - Automated installer with bundled REFramework
 - Frame-rate independent smoothing and interpolation pipeline
 
