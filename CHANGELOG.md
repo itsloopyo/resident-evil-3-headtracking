@@ -7,11 +7,30 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
 ### Logging
 
 - Capped the per-frame world-marker projection trace at five lines per session. It ran every 30 frames for the whole session, about 1.3 MB an hour at 60 fps into REFramework's log, which buried the startup lines a user is asked to send.
-- The log now names the config file it actually read (`Config loaded from <path>`), so an edit made to the wrong `HeadTracking.ini` is visible in the log instead of costing a support round trip.
+- The log now names the config file it actually read (`Config Canonical: <path>`, or `Created` or `Migrated` on a first start), so an edit made to the wrong file is visible in the log instead of costing a support round trip.
 - A one-shot `First tracker pose received: yaw/pitch/roll (local|remote connection)` line the first time a tracker packet reaches the mod. It is emitted ahead of every enable/gameplay gate, so its absence means the packets never arrived rather than that tracking was off or the camera hook had not engaged.
 - Corrected the log path in the docs. It is `<game>/re2_framework_log.txt`, not `reframework/reframework_log.txt`; REFramework uses that generic name for every RE Engine title.
 
 ### Changed
+- Settings move to `reframework\plugins\CameraUnlock.ini`. Earlier versions of the mod kept these settings in `HeadTracking.ini`, in the same folder. The first time this version starts and finds no `CameraUnlock.ini`, it reads your settings from `HeadTracking.ini` and writes them into `CameraUnlock.ini`. It never changes `HeadTracking.ini`, and does not read it again while `CameraUnlock.ini` exists.
+- A setting that the defaults the README shows set to `default` is written as `default` when the value imported for it equals its default at that start, which is the value `Defaults.ini` gives it, or the built-in value where `Defaults.ini` gives none. It then follows `Defaults.ini`. Every other setting is written with the value imported for it.
+- Comments, and keys the mod never read, are not carried over. Nor are these, where your old file had them:
+  - A sensitivity, scale, deadzone, response curve or axis inversion you changed from its default. Set these in your tracker instead.
+  - Reticle settings, and a key that toggled the reticle.
+  - The setting for a feature that earlier versions shipped switched off while it was untested. It now follows the mod's default.
+- An older version of the mod reads `HeadTracking.ini` and never reads `CameraUnlock.ini`, so a setting you change after updating is not in `HeadTracking.ini`.
+- Deleting only `CameraUnlock.ini` makes the next start read `HeadTracking.ini` again. To go back to the defaults, replace everything in `CameraUnlock.ini` with the defaults the README shows. Every setting they set to `default` then follows `Defaults.ini`.
+- Hotkeys are written as key names, and each hotkey lists every key that triggers it, the Ctrl+Shift chord included: `ToggleKey=End, Ctrl+Shift+Y`.
+- Turning positional tracking off or on with `Page Up` / `Ctrl+Shift+G`, and switching the yaw mode with `Page Down` / `Ctrl+Shift+H`, is saved to `CameraUnlock.ini` straight away, so the next start keeps your choice. Turning head tracking on or off with `End` still lasts for the session only.
+- The keys are renamed to the names every head tracking mod on this format uses: `[Network] UDPPort` is `UdpPort`, `[General] AutoEnable` is `EnableOnStartup`, `[Position] Enabled` is `PositionEnabled`, `[Position] LimitX`, `LimitY`, `LimitZ` and `LimitZBack` are `PositionLimitX` and so on, and `[Hotkeys] PositionToggleKey` is `CycleTrackingModeKey`. The import carries each value across.
+- Since the dev build (0.0.0-nightly.20260820.234785c), and not caused by the move to `CameraUnlock.ini`, reading the settings changed in two commits:
+  - `Insert` (`ReticleToggleKey`) and `Ctrl+Shift+U` no longer toggle the reticle, and `[Reticle] Enabled` is not read (0a84896). The dev build registered both keys on a flag nothing read, so they changed nothing on screen.
+  - A number that is not finite (`nan`, `inf`, `1e400`) keeps the setting's default (0a84896). The dev build kept a `nan` as it was and moved an infinity to the nearer end of the setting's range.
+  - A number followed by anything but an inline comment (`0,15` or `0.5abc`), or written in hex (`0x1`), keeps the setting's default (a6d6069). The dev build read the number at the front of the text, so `LocalSmoothing=0,15` gave 0.
+  - A position limit below 0.01 is kept as written, down to 0 (a6d6069). The dev build raised it to 0.01.
+  - `LimitY` sets how far the view moves down as well as up (a6d6069). The dev build held downward travel at 0.20 m whatever `LimitY` said.
+  - A hotkey code the mod no longer accepts as a hotkey (0, a negative code, one above `0xFE`, or Shift, Ctrl or Alt, which the chords are made of) keeps that hotkey's default key (a6d6069). The dev build registered the code as written.
+  - A sensitivity outside the dev build's range is read as written up to 5 (rotation) or 10 (position), where the dev build clamped it (a6d6069). Either way it is not carried over, as above.
 - `Page Up` / `Ctrl+Shift+G` turns positional tracking off and on again instead
   of cycling three modes. The third mode disabled head rotation, and it sat
   directly after the mode a `[Position] Enabled=false` config starts in, so one
@@ -31,6 +50,9 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
 - Removed the hidden 0.15 baseline smoothing floor that silently overrode the configured value. Local users now get zero-latency tracking by default.
 
 ### Added
+- A setting set to `default` in `CameraUnlock.ini` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it, and neither do earlier versions of this mod. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
+- `Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
+- When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that.
 - Decoupled head tracking via OpenTrack (UDP 4242)
 - 6DOF positional tracking with configurable sensitivity and limits
 - Aim decoupling: head moves camera, mouse controls aim independently
@@ -39,3 +61,9 @@ Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable
 - INI configuration file with sensitivity, position limits, smoothing, and hotkey settings
 - Automated installer with bundled REFramework
 - Frame-rate independent smoothing and interpolation pipeline
+
+### Removed
+- The key that toggled the reticle (`[Hotkeys] ReticleToggleKey`, `Insert`, and `Ctrl+Shift+U`), and the reticle setting (`[Reticle] Enabled`).
+- The sensitivity, scale, deadzone, response curve and axis inversion settings (`[Sensitivity] YawMultiplier`, `PitchMultiplier` and `RollMultiplier`, and `[Position] SensitivityX`, `SensitivityY`, `SensitivityZ`, `InvertX`, `InvertY` and `InvertZ`). Set these in your tracker app instead.
+- With these settings at their shipped defaults the camera moves as it did before: the dev build's installer and launcher seed both shipped 1.0 rotation multipliers, 2.0 position sensitivities and no inversion, and the mod now applies exactly that.
+- The installer and the Nexus ZIP no longer carry a config file, and the launcher manifest no longer seeds one: the mod creates `CameraUnlock.ini` when it first starts.

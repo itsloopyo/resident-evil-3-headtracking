@@ -7,7 +7,11 @@
 :: --- CONFIG BLOCK ---
 set "GAME_ID=resident-evil-3"
 set "MOD_DISPLAY_NAME=RE3 Head Tracking"
-set "MOD_DLLS=RE3HeadTracking.dll HeadTracking.ini"
+:: No config is deployed. The mod creates reframework\plugins\CameraUnlock.ini at
+:: first launch, importing HeadTracking.ini from an earlier version once, so a
+:: copy placed here would stop that import on an update, and MOD_DLLS's "copy /y"
+:: would overwrite the player's settings on every install.
+set "MOD_DLLS=RE3HeadTracking.dll"
 set "MOD_INTERNAL_NAME=RE3HeadTracking"
 set "MOD_VERSION=0.0.0"
 set "STATE_FILE=.headtracking-state.json"
