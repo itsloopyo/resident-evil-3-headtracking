@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-Pre-release. Distributed as dev builds (`0.0.0-nightly.<date>.<sha>`); no stable version tagged yet.
+Pre-release. Distributed as dev builds (`0.1.0-nightly.<date>.<sha>`, and `0.0.0-nightly.<date>.<sha>` before settings moved to `CameraUnlock.ini`); no stable version tagged yet.
 
 ### Logging
 

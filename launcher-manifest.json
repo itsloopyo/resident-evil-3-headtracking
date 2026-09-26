@@ -2,7 +2,7 @@
   "schema_version": 2,
   "mod_info": {
     "name": "RE3HeadTracking",
-    "version": "0.0.0",
+    "version": "0.1.0",
     "game_id": "resident-evil-3"
   },
   "strategy": "REFramework",
@@ -26,7 +26,7 @@
     "path": "reframework/plugins/CameraUnlock.ini",
     "anchor": "game_root",
     "legacy_source": "reframework/plugins/HeadTracking.ini",
-    "canonical_since": "0.0.0",
+    "canonical_since": "0.1.0",
     "per_game": {}
   }
 }

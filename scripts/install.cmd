@@ -13,7 +13,7 @@ set "MOD_DISPLAY_NAME=RE3 Head Tracking"
 :: would overwrite the player's settings on every install.
 set "MOD_DLLS=RE3HeadTracking.dll"
 set "MOD_INTERNAL_NAME=RE3HeadTracking"
-set "MOD_VERSION=0.0.0"
+set "MOD_VERSION=0.1.0"
 set "STATE_FILE=.headtracking-state.json"
 set "FRAMEWORK_TYPE=REFramework"
 set "REFRAMEWORK_VENDOR_ZIP_NAME=RE3.zip"
