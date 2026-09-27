@@ -23,6 +23,8 @@ namespace ref = cameraunlock::reframework;
 static constexpr const char* kPlayerManager = "offline.PlayerManager";
 static constexpr const char* kSurvivorCondition = "offline.survivor.SurvivorCondition";
 static constexpr const char* kGuiMaster = "offline.gui.GUIMaster";
+// The aim camera's own flag, read for the lean while aiming, not for the gate.
+static constexpr const char* kCameraSystem = "offline.camera.CameraSystem";
 
 static struct {
     reframework::API::Method* getCurrentPlayer = nullptr;
@@ -31,6 +33,7 @@ static struct {
     reframework::API::Method* getIsEvent = nullptr;
     reframework::API::Method* getIsOpenPause = nullptr;
     bool available = false;
+    reframework::API::Method* getIsHoldWeaponCamera = nullptr;
 } g_checks;
 
 static void Discover() {
@@ -56,6 +59,12 @@ static void Discover() {
         g_checks.available ? "ready" : "unavailable",
         g_checks.getCurrentPlayer, g_checks.getComponent,
         g_checks.survivorConditionType, g_checks.getIsEvent, g_checks.getIsOpenPause);
+
+    auto cameraSystemType = tdb->find_type(kCameraSystem);
+    if (cameraSystemType) g_checks.getIsHoldWeaponCamera = cameraSystemType->find_method("get_IsHoldWeaponCamera");
+    ref::LogInfo("Aim state %s: %s.get_IsHoldWeaponCamera=%p",
+                 g_checks.getIsHoldWeaponCamera ? "ready" : "unavailable, the lean is never eased while aiming",
+                 kCameraSystem, g_checks.getIsHoldWeaponCamera);
 }
 
 // The managed calls, guarded together. A probe that faults reports no
@@ -99,5 +108,16 @@ static ref::GameplayGate g_gate{&Discover, &Check};
 ref::GameplayGate* GameplayGateInstance() { return &g_gate; }
 
 bool IsInGameplay() { return g_gate.IsInGameplay(); }
+
+// Called only past the gate, whose first refresh ran Discover.
+bool IsAiming() {
+    if (!g_checks.getIsHoldWeaponCamera) return false;
+    __try {
+        auto system = reframework::API::get()->get_managed_singleton(kCameraSystem);
+        if (!system) return false;
+        return ref::CallMethodBool(g_checks.getIsHoldWeaponCamera, system);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    return false;
+}
 
 } // namespace RE3HT

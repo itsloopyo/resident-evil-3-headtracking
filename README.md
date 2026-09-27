@@ -113,14 +113,27 @@ can be changed or removed.
 | Toggle tracking            | `End`       | `Ctrl+Shift+Y` |
 | Toggle positional tracking | `Page Up`   | `Ctrl+Shift+G` |
 | Toggle yaw mode            | `Page Down` | `Ctrl+Shift+H` |
+| Toggle true free look      | `Insert`    | `Ctrl+Shift+U` |
 
 `Page Up` / `Ctrl+Shift+G` turns positional (6DOF) tracking off and on. Head rotation keeps running either way.
 
 `Toggle yaw mode` switches between world-space (horizon-locked) and camera-local yaw.
 
-The positional tracking choice and the yaw mode are saved to `CameraUnlock.ini` the moment you
-change them, so the next launch starts with the same choice. Toggling tracking on or off with `End`
-lasts for the session only: each launch starts with tracking on or off as `EnableOnStartup` says.
+The positional tracking choice, the yaw mode and true free look are saved to `CameraUnlock.ini` the
+moment you change them, so the next launch starts with the same choice. Toggling tracking on or off
+with `End` lasts for the session only: each launch starts with tracking on or off as
+`EnableOnStartup` says.
+
+### Aiming down sights
+
+Head tracking stays on while you aim, and your aim stays on your mouse or controller. Raising your
+weapon does not move the view.
+
+By default, leaning eases out while you aim, because it would move your eye off the aim camera's
+line, and comes back when you lower the weapon. `Insert` /
+`Ctrl+Shift+U` switches to **true free look**: the lean stays on while you aim and your head moves
+freely around the aim camera's line. It is off by default. The mod saves the mode you pick, so it
+holds the next time you start the game.
 
 ## Configuration
 
@@ -141,6 +154,7 @@ The built-in value of each setting set to `default` below:
 - `LocalSmoothing=0.0`
 - `RemoteSmoothing=0.15`
 - `PositionEnabled=true`
+- `TrueFreeLook=false`
 - `PositionLimitX=0.3`
 - `PositionLimitY=0.2`
 - `PositionLimitZ=0.4`
@@ -148,6 +162,7 @@ The built-in value of each setting set to `default` below:
 - `ToggleKey=End, Ctrl+Shift+Y`
 - `CycleTrackingModeKey=PageUp, Ctrl+Shift+G`
 - `YawModeKey=PageDown, Ctrl+Shift+H`
+- `TrueFreeLookKey=Insert, Ctrl+Shift+U`
 
 With every setting at its default, the file reads:
 
@@ -187,6 +202,9 @@ RemoteSmoothing=default
 ; true: moving your head moves the view.
 ; Tracking mode at startup. The mode hotkey turns it on and off and saves it here.
 PositionEnabled=default
+; false: while you aim down the sights, leaning keeps your eye on the sights.
+; true: the weapon stays put and your head moves freely around it (true free look).
+TrueFreeLook=default
 ; How far, in metres, leaning left or right can move the view.
 PositionLimitX=default
 ; How far, in metres, raising or lowering your head can move the view.
@@ -203,6 +221,8 @@ ToggleKey=default
 CycleTrackingModeKey=default
 ; Switches yaw between the world's up axis and the camera's own (WorldSpaceYaw).
 YawModeKey=default
+; Switches between keeping your eye on the sights and true free look (TrueFreeLook).
+TrueFreeLookKey=default
 ```
 <!-- /cameraunlock:config -->
 
@@ -235,6 +255,12 @@ above.
 
 **Wrong rotation axis:**
 - Set axis inversion and sensitivity in your tracker app. The mod has no settings for them.
+
+**The view is not centred on my aim while aiming:**
+- Your head is turned: your aim stays on your mouse or controller and you are looking past it. Turn back to it, or move your aim to where you are looking.
+
+**Leaning still moves the view while I aim:**
+- You are in true free look. Press `Insert` / `Ctrl+Shift+U` to go back to the default, where the lean eases out while you aim.
 
 **Yaw feels wrong when looking up or down at extreme angles:**
 - Try toggling between world-locked and camera-local yaw with `Page Down`. World-locked (default) is horizon-stable; camera-local follows the camera's current up-axis.

@@ -686,11 +686,12 @@ const std::vector<FollowRow>& FollowRows() {
 }
 
 // The import leaves to Defaults.ini exactly the rows PluginConfig::Read read at SetDefaults'
-// value, the tracking mode as RotationEnabled and PositionEnabled together.
+// value, the tracking mode as RotationEnabled and PositionEnabled together, and always
+// TrueFreeLook and TrueFreeLookKey, which no legacy build had.
 void CheckFollowsDefaultsIni(const std::string& name, const Config& read, const cfg::ImportResult& result) {
     Config shipped;
     shipped.SetDefaults(RE3HT::kConfigSchema);
-    std::set<std::string> expected;
+    std::set<std::string> expected{"TrueFreeLook", "TrueFreeLookKey"};
     for (const FollowRow& row : FollowRows()) {
         if (!row.legacy_same(read, shipped)) continue;
         expected.insert(row.concept_name);

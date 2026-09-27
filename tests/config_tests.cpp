@@ -128,14 +128,31 @@ void TheFileCarriesNoPoseShapingOrReticle() {
 void EveryHotkeyDefaultIsTheFleets() {
     std::printf("every hotkey list the table defaults to parses, and is the fleet's default\n");
     const Config defaults = cameraunlock::reframework::PluginConfigTable(RE3HT::kConfigSchema).defaults();
-    for (const std::string* list :
-         {&defaults.toggleKeyBindings, &defaults.cycleTrackingModeKeyBindings, &defaults.yawModeKeyBindings}) {
+    for (const std::string* list : {&defaults.toggleKeyBindings, &defaults.cycleTrackingModeKeyBindings,
+                                    &defaults.yawModeKeyBindings, &defaults.trueFreeLookKeyBindings}) {
         Check(cameraunlock::input::ParseKeyBindings(*list).ok(), list->c_str());
     }
     Check(defaults.toggleKeyBindings == "End, Ctrl+Shift+Y", "ToggleKey is End, Ctrl+Shift+Y");
     Check(defaults.cycleTrackingModeKeyBindings == "PageUp, Ctrl+Shift+G", "CycleTrackingModeKey is PageUp, Ctrl+Shift+G");
     Check(defaults.yawModeKeyBindings == "PageDown, Ctrl+Shift+H", "YawModeKey is PageDown, Ctrl+Shift+H");
+    Check(defaults.trueFreeLookKeyBindings == "Insert, Ctrl+Shift+U", "TrueFreeLookKey is Insert, Ctrl+Shift+U");
     Check(defaults.worldSpaceYaw, "WorldSpaceYaw defaults to true");
+    Check(!defaults.trueFreeLook, "TrueFreeLook defaults to false: sights locked");
+}
+
+void AnOldAdsModeLineLeavesFreeLookOff() {
+    std::printf("a file still carrying the retired ads_mode loads with true free look off\n");
+    const Scratch s = MakeScratch(L"ads-mode");
+    const std::wstring path = s.folder + L"\\" + RE3HT::testing::kConfigFileName;
+    std::string text = FreshRender();
+    const std::string at = "\r\n[Position]\r\n";
+    text.insert(text.find(at) + at.size(), "ads_mode=tracked\r\n");
+    WriteBytes(path, text);
+    cfg::ConfigOwner<Config> owner(Options(s));
+    const cfg::ConfigLoadResult<Config> loaded = owner.Load();
+    Check(loaded.status == cfg::ConfigLoadStatus::Canonical, "the file loads as canonical");
+    Check(!loaded.config.trueFreeLook, "ads_mode=tracked is not read as true free look");
+    Check(ReadBytes(path) == text, "and the load writes nothing");
 }
 
 void FirstLaunchCreatesTheCommittedFile() {
@@ -189,6 +206,14 @@ void TogglesSaveTheirRowsOnly() {
     Check(modeLines.size() == 1 && modeLines[0] == "PositionEnabled=false",
           "a mode change writes PositionEnabled and nothing else");
 
+    // PluginMod::ToggleTrueFreeLook's save.
+    const std::string afterMode = ReadBytes(path);
+    const cfg::ConfigSaveResult freeLook = owner.Save([](Config& c) { c.trueFreeLook = true; });
+    Check(freeLook.status == cfg::ConfigSaveStatus::Saved, "the true free look save is Saved");
+    const std::vector<std::string> freeLookLines = ChangedLines(afterMode, ReadBytes(path));
+    Check(freeLookLines.size() == 1 && freeLookLines[0] == "TrueFreeLook=true",
+          "the true free look toggle writes TrueFreeLook and nothing else");
+
     bool threw = false;
     try {
         owner.Save([](Config& c) { c.autoEnable = false; });
@@ -204,6 +229,7 @@ void TogglesSaveTheirRowsOnly() {
     Check(reread.status == cfg::ConfigLoadStatus::Canonical, "the saved file reads back as canonical");
     Check(!reread.config.worldSpaceYaw, "the yaw choice survives a restart");
     Check(!reread.config.positionEnabled, "the tracking mode survives a restart");
+    Check(reread.config.trueFreeLook, "true free look survives a restart");
     Check(reread.config.autoEnable, "EnableOnStartup is still the default");
 }
 
@@ -225,6 +251,7 @@ int main(int argc, char** argv) {
         FirstLaunchCreatesTheCommittedFile();
         TheShippedShapingStaysInTheCode();
         TogglesSaveTheirRowsOnly();
+        AnOldAdsModeLineLeavesFreeLookOff();
         std::filesystem::remove_all(ScratchRoot());
     } catch (const std::exception& e) {
         std::printf("FAIL: %s\n", e.what());

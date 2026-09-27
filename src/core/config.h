@@ -20,6 +20,9 @@ inline constexpr const char* kGameName = "Resident Evil 3";
 // canonicalConfig: settings live in reframework\plugins\CameraUnlock.ini, and
 // HeadTracking.ini, the file every earlier build read, is imported once while
 // CameraUnlock.ini is absent and never written.
+//
+// trueFreeLook: RE3 aims through a separate aim camera, so it ships sights
+// locked and true free look ([Position] TrueFreeLook, [Hotkeys] TrueFreeLookKey).
 inline constexpr cameraunlock::reframework::PluginConfigSchema kConfigSchema{
     /*title*/ "RE3 Head Tracking",
     /*positionInvertKeys*/ true,
@@ -28,6 +31,7 @@ inline constexpr cameraunlock::reframework::PluginConfigSchema kConfigSchema{
     /*positionSensitivity*/ 2.0f,
     /*modId*/ "re3",
     /*canonicalConfig*/ true,
+    /*trueFreeLook*/ true,
 };
 
 } // namespace RE3HT

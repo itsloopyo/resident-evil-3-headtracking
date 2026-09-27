@@ -59,6 +59,7 @@ const ref::PluginBootstrapDescriptor kPlugin = [] {
     d.camera.hookControllerAtInit = true;
     d.camera.aimDistanceMeters = kAimDistanceMeters;
     d.camera.gate = RE3HT::GameplayGateInstance();
+    d.camera.isAiming = &RE3HT::IsAiming;
     d.camera.onInit = []() { ref::InitGuiMethods(); };
     d.preGuiDrawElement = &RE3HT::OnPreGuiDrawElement;
     return d;

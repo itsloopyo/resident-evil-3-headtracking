@@ -11,4 +11,9 @@ cameraunlock::reframework::GameplayGate* GameplayGateInstance();
 // or in a cutscene).
 bool IsInGameplay();
 
+// True while the game's aim camera is up (offline.camera.CameraSystem
+// get_IsHoldWeaponCamera), polled once per gameplay frame. False on any frame it
+// cannot read.
+bool IsAiming();
+
 } // namespace RE3HT
