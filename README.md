@@ -2,16 +2,7 @@
 
 ![Resident Evil 3 running with this mod](https://raw.githubusercontent.com/itsloopyo/resident-evil-3-headtracking/main/assets/readme-clip.gif)
 
-An unofficial head tracking mod for Resident Evil 3 that moves the camera with your head while your mouse or controller keeps aiming, driven by OpenTrack over UDP, with no VR headset required.
-
-> [!CAUTION]
-> ## Experimental prototype - expect missing core features
->
-> This is **not** a finished mod.
->
-> Current builds may only test whether head tracking can drive the camera. Bug fixes and core features like decoupled look/aim, independent reticle behavior, correct shot direction, off-screen reticle support, movement handling, and comfort tuning may be missing at this early stage of development.
-
-> **Updating from a dev build:** settings now live in `reframework\plugins\CameraUnlock.ini`. The first start of this version reads your settings from `HeadTracking.ini` into it, and never changes `HeadTracking.ini`. A sensitivity or axis inversion you changed is not carried over: set those in your tracker. See [Configuration](#configuration).
+An unofficial head tracking mod for Resident Evil 3 that moves the camera with your head while your mouse or controller keeps aiming, driven by a webcam, phone, or any OpenTrack compatible tracker, with no VR headset required.
 
 ## Features
 
@@ -29,7 +20,7 @@ An unofficial head tracking mod for Resident Evil 3 that moves the camera with y
 
 ### Lopari
 
-Once this mod is available in Lopari, download [Lopari](https://lopari.app), choose **Resident Evil 3**, and click
+Download [Lopari](https://lopari.app), choose **Resident Evil 3**, and click
 **Play with head tracking**.
 
 ### Standalone Installer
@@ -231,14 +222,14 @@ YawModeKey=default
 
 The mod has no sensitivity, deadzone or axis inversion settings: set those in your tracker. It
 moves the view twice as far as the position your tracker reports, up to the position limits
-above. That is the `SensitivityX/Y/Z=2.0` earlier builds shipped, now part of the mod.
+above.
 
 ## Troubleshooting
 
 **Sending a log:**
 - REFramework writes one log per game launch at `<game>/re2_framework_log.txt`. That generic name is used for every RE Engine title, so it is the right file for this game too. If the game folder is not writable it lands in `%APPDATA%\REFramework\<exe name>\` instead.
 - The file is truncated on every launch, so it only ever holds the current session. Attach it as-is to a bug report.
-- This mod's lines are prefixed `[RE3HT]`. The startup sequence to look for is: `Plugin loaded`, `Config Canonical: ...` (`Created` or `Migrated` on the first start of this version), `UDP receiver started on port ...`, `Initialization complete`, then `First tracker pose received: ...` once the tracker sends anything.
+- This mod's lines are prefixed `[RE3HT]`. The startup sequence to look for is: `Plugin loaded`, `Config Canonical: ...`, `UDP receiver started on port ...`, `Initialization complete`, then `First tracker pose received: ...` once the tracker sends anything.
 
 **Mod not loading:**
 - Ensure REFramework is installed (`dinput8.dll` in game root)
