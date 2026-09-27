@@ -114,6 +114,8 @@ try {
     exit 1
 }
 
+Assert-ReleaseNotBelowCanonicalSince -RepoRoot $projectDir -Version $Version
+
 $tagName = "v$Version"
 
 $currentBranch = git rev-parse --abbrev-ref HEAD
