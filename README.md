@@ -129,10 +129,11 @@ with `End` lasts for the session only: each launch starts with tracking on or of
 Head tracking stays on while you aim, and your aim stays on your mouse or controller. Raising your
 weapon does not move the view.
 
-By default, leaning eases out while you aim, because it would move your eye off the aim camera's
-line, and comes back when you lower the weapon. `Insert` /
-`Ctrl+Shift+U` switches to **true free look**: the lean stays on while you aim and your head moves
-freely around the aim camera's line. It is off by default. The mod saves the mode you pick, so it
+By default, leaning sideways or up and down eases out while you aim, because it would move your eye
+off the aim camera's line, and comes back when you lower the weapon. Leaning towards or away from
+where you aim stays on, since it moves your eye along that line. `Insert` / `Ctrl+Shift+U` switches
+to **true free look**: the whole lean stays on while you aim and your head moves freely around the
+aim camera's line. It is off by default. The mod saves the mode you pick, so it
 holds the next time you start the game.
 
 ## Configuration
@@ -259,8 +260,8 @@ above.
 **The view is not centred on my aim while aiming:**
 - Your head is turned: your aim stays on your mouse or controller and you are looking past it. Turn back to it, or move your aim to where you are looking.
 
-**Leaning still moves the view while I aim:**
-- You are in true free look. Press `Insert` / `Ctrl+Shift+U` to go back to the default, where the lean eases out while you aim.
+**Leaning sideways still moves the view while I aim:**
+- You are in true free look. Press `Insert` / `Ctrl+Shift+U` to go back to the default, where leaning sideways or up and down eases out while you aim.
 
 **Yaw feels wrong when looking up or down at extreme angles:**
 - Try toggling between world-locked and camera-local yaw with `Page Down`. World-locked (default) is horizon-stable; camera-local follows the camera's current up-axis.
