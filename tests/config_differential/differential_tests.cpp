@@ -685,13 +685,22 @@ const std::vector<FollowRow>& FollowRows() {
     return rows;
 }
 
+// Whether the legacy file put an action the import carries on Insert, which TrueFreeLookKey's
+// default list also takes.
+bool InsertTaken(const Config& read) {
+    constexpr int kInsert = 0x2D;
+    return read.toggleKey == kInsert || read.positionToggleKey == kInsert || read.yawModeKey == kInsert ||
+           (RE3HT::kConfigSchema.diagnosticMarkerKey && read.diagnosticMarkerKey == kInsert);
+}
+
 // The import leaves to Defaults.ini exactly the rows PluginConfig::Read read at SetDefaults'
-// value, the tracking mode as RotationEnabled and PositionEnabled together, and always
-// TrueFreeLook and TrueFreeLookKey, which no legacy build had.
+// value, the tracking mode as RotationEnabled and PositionEnabled together, and TrueFreeLook and
+// TrueFreeLookKey, which no legacy build had, the key list only while no action is on Insert.
 void CheckFollowsDefaultsIni(const std::string& name, const Config& read, const cfg::ImportResult& result) {
     Config shipped;
     shipped.SetDefaults(RE3HT::kConfigSchema);
-    std::set<std::string> expected{"TrueFreeLook", "TrueFreeLookKey"};
+    std::set<std::string> expected{"TrueFreeLook"};
+    if (!InsertTaken(read)) expected.insert("TrueFreeLookKey");
     for (const FollowRow& row : FollowRows()) {
         if (!row.legacy_same(read, shipped)) continue;
         expected.insert(row.concept_name);
@@ -736,6 +745,7 @@ struct MigrationTally {
     int created = 0;
     int converted = 0;
     int with_pose_shaping_dropped = 0;
+    int with_insert_kept = 0;
 };
 
 cfg::ConfigOwnerOptions<Config> Options(const std::wstring& dir, const MigrationTally& tally) {
@@ -877,6 +887,17 @@ void MigrateInput(const Folders& f, const std::string& name, const std::optional
         return;
     }
     tally.migrated.insert(*m.bytes);
+
+    // An action the legacy file put on Insert keeps it, and true free look keeps only its chord.
+    const std::string freeLookKey = RowText(*m.bytes, "TrueFreeLookKey");
+    if (InsertTaken(read)) {
+        ++tally.with_insert_kept;
+        if (freeLookKey != "Ctrl+Shift+U" || m.loaded.config.trueFreeLookKeyBindings != "Ctrl+Shift+U") {
+            Fail(name, "an action is on Insert, and TrueFreeLookKey is " + freeLookKey + ", not Ctrl+Shift+U");
+        }
+    } else if (freeLookKey != "default") {
+        Fail(name, "no action is on Insert, and TrueFreeLookKey is " + freeLookKey + ", not default");
+    }
 
     const Migration ro = Migrate(name, f.read_only, bytes, true, tally);
     if (ro.loaded.status != ConfigLoadStatus::Migrated || ro.bytes != m.bytes) {
@@ -1237,6 +1258,8 @@ int main() {
         std::printf("  %d with a changed sensitivity or inversion dropped (pose_shaping)\n",
                     tally.with_pose_shaping_dropped);
         if (tally.with_pose_shaping_dropped == 0) Fail("pose shaping", "no input drops a changed value");
+        std::printf("  %d with an action on Insert, true free look on Ctrl+Shift+U alone\n", tally.with_insert_kept);
+        if (tally.with_insert_kept == 0) Fail("insert", "no input puts an action on Insert");
         if (tally.migrated.count(tally.committed) == 0) Fail("first run", "no input migrated to the committed file");
 
         wchar_t exe[MAX_PATH];
