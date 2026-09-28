@@ -109,6 +109,8 @@ ref::GameplayGate* GameplayGateInstance() { return &g_gate; }
 
 bool IsInGameplay() { return g_gate.IsInGameplay(); }
 
+static bool g_aimFaultLogged = false;
+
 // Called only past the gate, whose first refresh ran Discover.
 bool IsAiming() {
     if (!g_checks.getIsHoldWeaponCamera) return false;
@@ -116,7 +118,14 @@ bool IsAiming() {
         auto system = reframework::API::get()->get_managed_singleton(kCameraSystem);
         if (!system) return false;
         return ref::CallMethodBool(g_checks.getIsHoldWeaponCamera, system);
-    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        if (!g_aimFaultLogged) {
+            g_aimFaultLogged = true;
+            ref::LogWarning("Aim state: %s.get_IsHoldWeaponCamera faulted; the sights read as down on every "
+                            "frame it does (logged once)",
+                            kCameraSystem);
+        }
+    }
     return false;
 }
 
