@@ -13,7 +13,7 @@ Pre-release. Distributed as dev builds (`0.1.0-nightly.<date>.<sha>`, and `0.0.0
 
 ### Changed
 - Settings move to `reframework\plugins\CameraUnlock.ini`. Earlier versions of the mod kept these settings in `HeadTracking.ini`, in the same folder. The first time this version starts and finds no `CameraUnlock.ini`, it reads your settings from `HeadTracking.ini` and writes them into `CameraUnlock.ini`. It never changes `HeadTracking.ini`, and does not read it again while `CameraUnlock.ini` exists.
-- A setting that the defaults the README shows set to `default` is written as `default` when the value imported for it equals its default at that start, which is the value `Defaults.ini` gives it, or the built-in value where `Defaults.ini` gives none. It then follows `Defaults.ini`. Every other setting is written with the value imported for it.
+- A setting that the defaults the README shows set to `default` is written as `default` when you never changed it from the default earlier versions used, because `HeadTracking.ini` does not hold it or holds that default, even where `Defaults.ini` gives it another value. It then follows `Defaults.ini`, so it takes the value `Defaults.ini` gives it, or the built-in value where `Defaults.ini` gives none, which can differ from the default earlier versions used. A setting you changed is written with the value imported for it, or as `default` where that value equals its default at that start.
 - Comments, and keys the mod never read, are not carried over. Nor are these, where your old file had them:
   - A sensitivity, scale, deadzone, response curve or axis inversion you changed from its default. Set these in your tracker instead.
   - Reticle settings, and a key that toggled the reticle.
@@ -21,10 +21,10 @@ Pre-release. Distributed as dev builds (`0.1.0-nightly.<date>.<sha>`, and `0.0.0
 - An older version of the mod reads `HeadTracking.ini` and never reads `CameraUnlock.ini`, so a setting you change after updating is not in `HeadTracking.ini`.
 - Deleting only `CameraUnlock.ini` makes the next start read `HeadTracking.ini` again. To go back to the defaults, replace everything in `CameraUnlock.ini` with the defaults the README shows. Every setting they set to `default` then follows `Defaults.ini`.
 - Hotkeys are written as key names, and each hotkey lists every key that triggers it, the Ctrl+Shift chord included: `ToggleKey=End, Ctrl+Shift+Y`.
-- Turning positional tracking off or on with `Page Up` / `Ctrl+Shift+G`, and switching the yaw mode with `Page Down` / `Ctrl+Shift+H`, is saved to `CameraUnlock.ini` straight away, so the next start keeps your choice. Turning head tracking on or off with `End` still lasts for the session only.
+- Turning positional tracking off or on with `Page Up` / `Ctrl+Shift+G`, switching the yaw mode with `Page Down` / `Ctrl+Shift+H`, and switching true free look with `Insert` / `Ctrl+Shift+U`, is saved to `CameraUnlock.ini` straight away, so the next start keeps your choice. Turning head tracking on or off with `End` still lasts for the session only.
 - The keys are renamed to the names every head tracking mod on this format uses: `[Network] UDPPort` is `UdpPort`, `[General] AutoEnable` is `EnableOnStartup`, `[Position] Enabled` is `PositionEnabled`, `[Position] LimitX`, `LimitY`, `LimitZ` and `LimitZBack` are `PositionLimitX` and so on, and `[Hotkeys] PositionToggleKey` is `CycleTrackingModeKey`. The import carries each value across.
 - Since the dev build (0.0.0-nightly.20260820.234785c), and not caused by the move to `CameraUnlock.ini`, reading the settings changed in two commits:
-  - `Insert` (`ReticleToggleKey`) and `Ctrl+Shift+U` no longer toggle the reticle, and `[Reticle] Enabled` is not read (0a84896). The dev build registered both keys on a flag nothing read, so they changed nothing on screen.
+  - `Insert` (`ReticleToggleKey`) and `Ctrl+Shift+U` no longer toggle the reticle, and `[Reticle] Enabled` is not read (0a84896). The dev build registered both keys on a flag nothing read, so they changed nothing on screen. Both keys now switch true free look (32d408e).
   - A number that is not finite (`nan`, `inf`, `1e400`) keeps the setting's default (0a84896). The dev build kept a `nan` as it was and moved an infinity to the nearer end of the setting's range.
   - A number followed by anything but an inline comment (`0,15` or `0.5abc`), or written in hex (`0x1`), keeps the setting's default (a6d6069). The dev build read the number at the front of the text, so `LocalSmoothing=0,15` gave 0.
   - A position limit below 0.01 is kept as written, down to 0 (a6d6069). The dev build raised it to 0.01.
@@ -48,12 +48,13 @@ Pre-release. Distributed as dev builds (`0.1.0-nightly.<date>.<sha>`, and `0.0.0
 - Smoothing is now two user-configurable parameters in a new `[Smoothing]` section of `CameraUnlock.ini`: `LocalSmoothing` (default 0.0) for a tracker running on this machine, and `RemoteSmoothing` (default 0.15) for a tracker on a remote network device. The value is picked per connection from the packet source address and is re-evaluated while the game runs, so switching between a local OpenTrack instance and a phone on WiFi takes effect without a restart.
 - Removed the `[Position] Smoothing` key. Both new parameters cover rotation and position, so there is no separate position smoothing setting.
 - Removed the hidden 0.15 baseline smoothing floor that silently overrode the configured value. Local users now get zero-latency tracking by default.
-- A setting you never changed from the default earlier versions used, because `HeadTracking.ini` does not hold it or holds that default, is written as `default` even where `Defaults.ini` gives it another value. It then follows `Defaults.ini`, so it takes the value `Defaults.ini` gives it, or the built-in value where `Defaults.ini` gives none, which can differ from the default earlier versions used. A setting you changed is still written with the value imported for it, or as `default` where that value equals its default at that start.
 
 ### Added
 - A setting set to `default` in `CameraUnlock.ini` takes its value from `Defaults.ini`, which every head tracking mod that keeps its settings in `CameraUnlock.ini` reads. Head tracking mods that keep their settings in another file do not read it, and neither do earlier versions of this mod. Writing a value in place of `default` changes that setting for this game only. When the mod saves a setting that a hotkey changed in game, it writes the new value in place of `default`, so that setting no longer follows `Defaults.ini` in this game until you set it to `default` again.
 - `Defaults.ini` is `%AppData%\CameraUnlock\Defaults.ini` on Windows; `$XDG_CONFIG_HOME/CameraUnlock/Defaults.ini` on Linux, or `~/.config/CameraUnlock/Defaults.ini` where `XDG_CONFIG_HOME` is not set, under Wine and Proton too; and `~/Library/Application Support/CameraUnlock/Defaults.ini` on macOS. The mod's log, where it writes one, names the file it read.
 - When the mod starts and finds no `Defaults.ini`, it creates one holding the built-in values, unless Windows runs the game as a packaged app. The mod never changes `Defaults.ini` after that.
+- Head tracking stays on while you aim, and raising your weapon does not move the view. By default leaning eases out while the game's aim camera is up, because it would move your eye off the aim, and comes back when you lower the weapon. Turning your head is not changed.
+- True free look, `[Position] TrueFreeLook` in `CameraUnlock.ini`, off by default: leaning stays on while you aim. `Insert` or `Ctrl+Shift+U` (`[Hotkeys] TrueFreeLookKey`) switches it in game, and the mod saves the new value to `CameraUnlock.ini` straight away, so it comes back at the next start.
 - Decoupled head tracking via OpenTrack (UDP 4242)
 - 6DOF positional tracking with configurable limits
 - Aim decoupling: head moves camera, mouse controls aim independently
@@ -64,7 +65,7 @@ Pre-release. Distributed as dev builds (`0.1.0-nightly.<date>.<sha>`, and `0.0.0
 - Frame-rate independent smoothing and interpolation pipeline
 
 ### Removed
-- The key that toggled the reticle (`[Hotkeys] ReticleToggleKey`, `Insert`, and `Ctrl+Shift+U`), and the reticle setting (`[Reticle] Enabled`).
+- The key that toggled the reticle (`[Hotkeys] ReticleToggleKey`, `Insert`, and `Ctrl+Shift+U`), and the reticle setting (`[Reticle] Enabled`). `Insert` and `Ctrl+Shift+U` switch true free look instead.
 - The sensitivity, scale, deadzone, response curve and axis inversion settings (`[Sensitivity] YawMultiplier`, `PitchMultiplier` and `RollMultiplier`, and `[Position] SensitivityX`, `SensitivityY`, `SensitivityZ`, `InvertX`, `InvertY` and `InvertZ`). Set these in your tracker app instead.
 - With these settings at their shipped defaults the camera moves as it did before: the dev build's installer and launcher seed both shipped 1.0 rotation multipliers, 2.0 position sensitivities and no inversion, and the mod now applies exactly that.
 - The installer and the Nexus ZIP no longer carry a config file, and the launcher manifest no longer seeds one: the mod creates `CameraUnlock.ini` when it first starts.
